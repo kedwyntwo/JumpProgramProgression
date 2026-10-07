@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import android.app.AlertDialog;
 import android.content.DialogInterface;
+import android.content.Intent;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,6 +21,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowDialog;
+import org.robolectric.shadows.ShadowActivity;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -74,6 +76,7 @@ public class MainActivityTest {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         activity.deleteDatabase("workouts.db");
         click(activity, "Создать запись тренировки");
+        click(activity, WorkoutStore.KIRILL);
         typeAndNext(activity, "2026-10-07");
         typeAndNext(activity, "A");
         typeAndNext(activity, "Мёртвый жук");
@@ -92,13 +95,14 @@ public class MainActivityTest {
         assertNotNull(find(root(activity), TextView.class, "Подходы × повторы: 2×6"));
         assertNotNull(find(root(activity), TextView.class, "Комментарий: Техника чистая"));
         assertTrue(all(root(activity), EditText.class).isEmpty());
-        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate("2026-10-07");
+        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07");
         assertEquals(1, saved.size());
+        assertEquals(WorkoutStore.KIRILL, saved.get(0).athlete);
         assertEquals("Свой вес", saved.get(0).values[3]);
         click(activity, "Удалить запись · Мёртвый жук");
-        assertEquals(1, new WorkoutStore(activity).onDate("2026-10-07").size());
+        assertEquals(1, new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07").size());
         confirm();
-        assertTrue(new WorkoutStore(activity).onDate("2026-10-07").isEmpty());
+        assertTrue(new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07").isEmpty());
     }
 
     @Test public void liveWorkoutLogsOnlyCompletedExercisesWithPrefilledPlan() throws Exception {
@@ -131,12 +135,56 @@ public class MainActivityTest {
         second.get(0).setText("8");
         second.get(1).setText("8");
         second.get(2).setText("1");
-        click(activity, "Сохранить журнал");
+        click(activity, "Перейти к Игорю");
+        assertNotNull(find(root(activity), TextView.class, WorkoutStore.IGOR));
+        click(activity, "Свой вес");
+        List<EditText> igorFirst = all(root(activity), EditText.class);
+        igorFirst.get(1).setText("6");
+        igorFirst.get(2).setText("0");
+        click(activity, "Следующее упражнение");
+        List<EditText> igorSecond = all(root(activity), EditText.class);
+        igorSecond.get(0).setText("10");
+        igorSecond.get(1).setText("9");
+        igorSecond.get(2).setText("2");
+        click(activity, "Сохранить оба журнала");
         String today = LocalDate.now().toString();
-        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate(today);
-        assertEquals(2, saved.size());
-        assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "7", "0", ""}, saved.get(0).values);
-        assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "8 кг", "3×8/сторона", "8", "1", ""}, saved.get(1).values);
+        WorkoutStore store = new WorkoutStore(activity);
+        List<WorkoutStore.Entry> kirill = store.onDate(WorkoutStore.KIRILL, today);
+        List<WorkoutStore.Entry> igor = store.onDate(WorkoutStore.IGOR, today);
+        assertEquals(2, kirill.size());
+        assertEquals(2, igor.size());
+        assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "7", "0", ""}, kirill.get(0).values);
+        assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "8 кг", "3×8/сторона", "8", "1", ""}, kirill.get(1).values);
+        assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "6", "0", ""}, igor.get(0).values);
+        assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "10 кг", "3×8/сторона", "9", "2", ""}, igor.get(1).values);
+        click(activity, "На главную");
+        click(activity, "Журнал тренировок");
+        click(activity, WorkoutStore.KIRILL);
+        click(activity, today);
+        assertNotNull(find(root(activity), TextView.class, "Вес: 8 кг"));
+        assertNull(find(root(activity), TextView.class, "Вес: 10 кг"));
+    }
+
+    @Test public void exportRequiresDateRangeAndOpensPhoneSavePicker() {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        activity.deleteDatabase("workouts.db");
+        new WorkoutStore(activity).add(WorkoutStore.KIRILL,
+                new String[]{"2026-01-02", "A", "Мёртвый жук", "Свой вес", "2×6", "7", "0", ""});
+        click(activity, "Выгрузить XLS");
+        click(activity, WorkoutStore.KIRILL);
+        List<EditText> dates = all(root(activity), EditText.class);
+        assertEquals(2, dates.size());
+        dates.get(0).setText("2026-01-03");
+        dates.get(1).setText("2026-01-02");
+        click(activity, "Выбрать место сохранения");
+        assertNull(Shadows.shadowOf(activity).getNextStartedActivityForResult());
+        dates.get(0).setText("2026-01-02");
+        click(activity, "Выбрать место сохранения");
+        ShadowActivity.IntentForResult launched = Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertNotNull(launched);
+        assertEquals(Intent.ACTION_CREATE_DOCUMENT, launched.intent.getAction());
+        assertEquals("application/vnd.ms-excel", launched.intent.getType());
+        assertTrue(launched.intent.getStringExtra(Intent.EXTRA_TITLE).endsWith(".xls"));
     }
 
     private Button findByDescription(View view, String description) {

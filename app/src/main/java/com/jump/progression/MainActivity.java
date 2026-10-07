@@ -3,6 +3,7 @@ package com.jump.progression;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioAttributes;
@@ -13,6 +14,7 @@ import android.media.ToneGenerator;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.CountDownTimer;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -23,6 +25,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.IOException;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Calendar;
@@ -31,6 +37,7 @@ import java.util.List;
 import org.json.JSONException;
 
 public final class MainActivity extends Activity {
+    private static final int SAVE_XLS_REQUEST = 4101;
     private static final String[] LABELS = {"Дата", "Тренировка", "Упражнение", "Вес", "Подходы × повторы", "RPE", "Боль / дискомфорт 0–10", "Комментарий"};
     private static final String[] HINTS = {"ГГГГ-ММ-ДД", "Например, A", "Название упражнения", "Вес в кг", "", "0–10", "0–10", "Необязательно"};
     private static final int INK = Color.rgb(29, 48, 48);
@@ -41,6 +48,10 @@ public final class MainActivity extends Activity {
     private LinearLayout page;
     private String screen = "home";
     private String[] draft = new String[8];
+    private String entryAthlete;
+    private String journalAthlete;
+    private String exportAthlete, exportFrom, exportTo;
+    private EditText exportFromField, exportToField;
     private int step = 0, week = 1, currentExercise = 0;
     private EditText field, setsField, repsField;
     private boolean[] completed;
@@ -59,6 +70,11 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (savedInstanceState != null) {
+            exportAthlete = savedInstanceState.getString("export_athlete");
+            exportFrom = savedInstanceState.getString("export_from");
+            exportTo = savedInstanceState.getString("export_to");
+        }
         store = new WorkoutStore(this);
         try {
             program = new ProgramA(this);
@@ -137,14 +153,23 @@ public final class MainActivity extends Activity {
         stopTimer();
         begin("Прогресс тренировок", "home");
         paragraph("Программа A и журнал тренировок всегда под рукой.");
-        button("Создать запись тренировки", () -> newEntry(null));
-        button("Все записи", this::dates);
+        button("Создать запись тренировки", this::chooseAthleteForEntry);
+        button("Журнал тренировок", this::chooseAthleteForJournal);
         button("Live-тренировка", this::startLive);
+        button("Выгрузить XLS", this::chooseExportScope);
         gap(12);
         paragraph("Записи хранятся только на этом устройстве.");
     }
 
-    private void newEntry(String[] previous) {
+    private void chooseAthleteForEntry() {
+        begin("Для кого запись?", "choose_entry_athlete");
+        button(WorkoutStore.KIRILL, () -> newEntry(null, WorkoutStore.KIRILL));
+        button(WorkoutStore.IGOR, () -> newEntry(null, WorkoutStore.IGOR));
+        secondary("На главную", this::home);
+    }
+
+    private void newEntry(String[] previous, String athlete) {
+        entryAthlete = athlete;
         draft = new String[8];
         draft[0] = previous == null ? LocalDate.now().toString() : previous[0];
         draft[1] = previous == null ? "A" : previous[1];
@@ -155,7 +180,7 @@ public final class MainActivity extends Activity {
     }
 
     private void wizard() {
-        begin("Новая запись", "wizard");
+        begin("Новая запись · " + entryAthlete, "wizard");
         paragraph("Поле " + (step + 1) + " из " + LABELS.length + " · " + LABELS[step]);
         field = null;
         setsField = null;
@@ -212,13 +237,17 @@ public final class MainActivity extends Activity {
     }
 
     private void pickDate() {
+        pickDate(field);
+    }
+
+    private void pickDate(EditText target) {
         Calendar today = Calendar.getInstance();
         try {
-            LocalDate date = LocalDate.parse(field.getText().toString().trim());
+            LocalDate date = LocalDate.parse(target.getText().toString().trim());
             today.set(date.getYear(), date.getMonthValue() - 1, date.getDayOfMonth());
         } catch (DateTimeParseException ignored) { }
         new DatePickerDialog(this, (picker, year, month, day) ->
-                field.setText(LocalDate.of(year, month + 1, day).toString()),
+                target.setText(LocalDate.of(year, month + 1, day).toString()),
                 today.get(Calendar.YEAR), today.get(Calendar.MONTH), today.get(Calendar.DAY_OF_MONTH)).show();
     }
 
@@ -267,29 +296,40 @@ public final class MainActivity extends Activity {
 
     private void save() {
         try {
-            store.add(draft);
+            store.add(entryAthlete, draft);
             String[] saved = draft.clone();
             begin("Запись сохранена", "saved");
-            paragraph(saved[0] + " · " + saved[2]);
-            button("Добавить ещё упражнение", () -> newEntry(saved));
-            button("Посмотреть записи за дату", () -> entries(saved[0]));
+            paragraph(entryAthlete + " · " + saved[0] + " · " + saved[2]);
+            button("Добавить ещё упражнение", () -> newEntry(saved, entryAthlete));
+            button("Посмотреть записи за дату", () -> entries(entryAthlete, saved[0]));
             secondary("На главную", this::home);
         } catch (Exception error) {
             Toast.makeText(this, "Не удалось сохранить запись: " + error.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
-    private void dates() {
-        begin("Все записи", "dates");
-        List<String> dates = store.dates();
-        if (dates.isEmpty()) paragraph("Записей пока нет. Добавьте первое упражнение.");
-        for (String date : dates) button(date, () -> entries(date));
+    private void chooseAthleteForJournal() {
+        begin("Чей журнал открыть?", "choose_journal_athlete");
+        button(WorkoutStore.KIRILL, () -> dates(WorkoutStore.KIRILL));
+        button(WorkoutStore.IGOR, () -> dates(WorkoutStore.IGOR));
+        if (store.hasUnassigned()) secondary("Старые записи без пользователя", () -> dates(""));
         secondary("На главную", this::home);
     }
 
-    private void entries(String date) {
-        begin("Тренировка · " + date, "entries");
-        List<WorkoutStore.Entry> rows = store.onDate(date);
+    private void dates(String athlete) {
+        journalAthlete = athlete;
+        begin(athlete.isEmpty() ? "Старые записи" : "Журнал · " + athlete, "dates");
+        List<String> dates = store.dates(athlete);
+        if (dates.isEmpty()) paragraph("Записей пока нет. Добавьте первое упражнение.");
+        for (String date : dates) button(date, () -> entries(athlete, date));
+        secondary("Выбрать другого", this::chooseAthleteForJournal);
+        secondary("На главную", this::home);
+    }
+
+    private void entries(String athlete, String date) {
+        journalAthlete = athlete;
+        begin((athlete.isEmpty() ? "Старые записи" : athlete) + " · " + date, "entries");
+        List<WorkoutStore.Entry> rows = store.onDate(athlete, date);
         for (WorkoutStore.Entry entry : rows) {
             String[] row = entry.values;
             TextView title = text(row[2], 20, INK, true);
@@ -306,13 +346,109 @@ public final class MainActivity extends Activity {
                     .setNegativeButton("Отмена", null)
                     .setPositiveButton("Удалить", (dialog, which) -> {
                         if (store.delete(entry.id)) {
-                            if (store.onDate(date).isEmpty()) dates(); else entries(date);
+                            if (store.onDate(athlete, date).isEmpty()) dates(athlete); else entries(athlete, date);
                         } else Toast.makeText(this, "Запись не найдена", Toast.LENGTH_SHORT).show();
                     }).show());
+            if (athlete.isEmpty()) {
+                secondary("Назначить Кириллу", () -> assignLegacy(entry, WorkoutStore.KIRILL, date));
+                secondary("Назначить Игорю", () -> assignLegacy(entry, WorkoutStore.IGOR, date));
+            }
             gap(20);
         }
-        secondary("Все даты", this::dates);
+        secondary("Все даты", () -> dates(athlete));
         secondary("На главную", this::home);
+    }
+
+    private void assignLegacy(WorkoutStore.Entry entry, String athlete, String date) {
+        new AlertDialog.Builder(this).setTitle("Назначить запись " + athlete + "?")
+                .setMessage(entry.values[2] + " · " + date)
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Назначить", (dialog, which) -> {
+                    if (store.assign(entry.id, athlete)) {
+                        if (store.onDate("", date).isEmpty()) dates(""); else entries("", date);
+                    } else Toast.makeText(this, "Запись не найдена", Toast.LENGTH_SHORT).show();
+                }).show();
+    }
+
+    private void chooseExportScope() {
+        begin("Выгрузить записи в XLS", "export_scope");
+        paragraph("Сначала выберите, чьи записи включить в файл.");
+        button("Кирилл", () -> exportRange(WorkoutStore.KIRILL));
+        button("Игорь", () -> exportRange(WorkoutStore.IGOR));
+        button("Все записи", () -> exportRange(null));
+        secondary("На главную", this::home);
+    }
+
+    private void exportRange(String athlete) {
+        exportAthlete = athlete;
+        if (exportFrom == null) exportFrom = LocalDate.now().withDayOfMonth(1).toString();
+        if (exportTo == null) exportTo = LocalDate.now().toString();
+        begin("Период выгрузки", "export_range");
+        paragraph("Диапазон включает обе выбранные даты. После этого выберите папку на телефоне, например «Загрузки».");
+        page.addView(text("С даты", 17, INK, true));
+        exportFromField = input("ГГГГ-ММ-ДД", exportFrom, InputType.TYPE_CLASS_TEXT);
+        secondary("Выбрать начальную дату", () -> pickDate(exportFromField));
+        page.addView(text("По дату", 17, INK, true));
+        exportToField = input("ГГГГ-ММ-ДД", exportTo, InputType.TYPE_CLASS_TEXT);
+        secondary("Выбрать конечную дату", () -> pickDate(exportToField));
+        button("Выбрать место сохранения", () -> {
+            String from = exportFromField.getText().toString().trim();
+            String to = exportToField.getText().toString().trim();
+            LocalDate fromDate, toDate;
+            try { fromDate = LocalDate.parse(from); }
+            catch (DateTimeParseException error) { exportFromField.setError("Выберите корректную дату"); return; }
+            try { toDate = LocalDate.parse(to); }
+            catch (DateTimeParseException error) { exportToField.setError("Выберите корректную дату"); return; }
+            if (fromDate.isAfter(toDate)) { exportToField.setError("Конечная дата раньше начальной"); return; }
+            if (store.exportRows(exportAthlete, from, to).isEmpty()) {
+                Toast.makeText(this, "За этот период записей нет", Toast.LENGTH_LONG).show();
+                return;
+            }
+            exportFrom = from;
+            exportTo = to;
+            String scope = athlete == null ? "all" : WorkoutStore.KIRILL.equals(athlete) ? "kirill" : "igor";
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("application/vnd.ms-excel");
+            intent.putExtra(Intent.EXTRA_TITLE, "training-" + scope + "-" + from + "-" + to + ".xls");
+            startActivityForResult(intent, SAVE_XLS_REQUEST);
+        });
+        secondary("Назад", this::chooseExportScope);
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        if (exportFromField != null && "export_range".equals(screen)) {
+            exportFrom = exportFromField.getText().toString().trim();
+            exportTo = exportToField.getText().toString().trim();
+        }
+        state.putString("export_athlete", exportAthlete);
+        state.putString("export_from", exportFrom);
+        state.putString("export_to", exportTo);
+        super.onSaveInstanceState(state);
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != SAVE_XLS_REQUEST || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri destination = data.getData();
+        File temporary = null;
+        try {
+            List<WorkoutStore.Entry> rows = store.exportRows(exportAthlete, exportFrom, exportTo);
+            temporary = File.createTempFile("training-export-", ".xls", getCacheDir());
+            try (OutputStream output = new FileOutputStream(temporary)) { XlsExporter.write(output, rows); }
+            try (OutputStream output = getContentResolver().openOutputStream(destination, "w")) {
+                if (output == null) throw new IOException("Не удалось открыть выбранный файл");
+                Files.copy(temporary.toPath(), output);
+            }
+            Toast.makeText(this, "XLS сохранён в выбранную папку", Toast.LENGTH_LONG).show();
+            home();
+        } catch (Exception error) {
+            try { DocumentsContract.deleteDocument(getContentResolver(), destination); }
+            catch (Exception ignored) { }
+            Toast.makeText(this, "Не удалось сохранить XLS: " + error.getMessage(), Toast.LENGTH_LONG).show();
+        } finally {
+            if (temporary != null) temporary.delete();
+        }
     }
 
     private void startLive() {
@@ -411,8 +547,8 @@ public final class MainActivity extends Activity {
         }
         stopTimer();
         new AlertDialog.Builder(this).setTitle("Тренировка завершена")
-                .setMessage("Выполнено упражнений: " + count + ". Добавить их в журнал за сегодня?")
-                .setPositiveButton("Заполнить журнал", (dialog, which) -> startLiveJournal())
+                .setMessage("Выполнено упражнений: " + count + ". Заполнить журнал сначала для Кирилла, затем для Игоря?")
+                .setPositiveButton("Заполнить журналы", (dialog, which) -> startLiveJournal())
                 .setNegativeButton("Продолжить", null)
                 .setNeutralButton("Без записи", (dialog, which) -> home()).show();
     }
@@ -420,7 +556,7 @@ public final class MainActivity extends Activity {
     private void startLiveJournal() {
         liveIndices = new ArrayList<>();
         for (int i = 0; i < completed.length; i++) if (completed[i]) liveIndices.add(i);
-        liveAnswers = new String[liveIndices.size()][3];
+        liveAnswers = new String[liveIndices.size() * 2][3];
         for (String[] answer : liveAnswers) for (int i = 0; i < 3; i++) answer[i] = "";
         liveJournalDate = LocalDate.now().toString();
         liveJournalIndex = 0;
@@ -429,9 +565,14 @@ public final class MainActivity extends Activity {
 
     private void liveJournal() {
         begin("Журнал после тренировки", "live_log");
-        ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(liveJournalIndex));
+        int exercisesPerAthlete = liveIndices.size();
+        int participant = liveJournalIndex / exercisesPerAthlete;
+        String athlete = participant == 0 ? WorkoutStore.KIRILL : WorkoutStore.IGOR;
+        ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(liveJournalIndex % exercisesPerAthlete));
         String[] answer = liveAnswers[liveJournalIndex];
-        paragraph("Сегодня · " + liveJournalDate + " · упражнение " + (liveJournalIndex + 1) + " из " + liveIndices.size());
+        page.addView(text(athlete, 21, GREEN, true));
+        gap(8);
+        paragraph("Сегодня · " + liveJournalDate + " · упражнение " + (liveJournalIndex % exercisesPerAthlete + 1) + " из " + exercisesPerAthlete);
         page.addView(text(exercise.name, 22, INK, true));
         gap(8);
         paragraph("План недели " + week + ": " + exercise.weeks[week - 1]);
@@ -453,9 +594,11 @@ public final class MainActivity extends Activity {
         liveRpeField = input("0–10", answer[1], InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         page.addView(text("Боль / дискомфорт", 17, INK, true));
         livePainField = input("0–10", answer[2], InputType.TYPE_CLASS_NUMBER);
-        button(liveJournalIndex == liveIndices.size() - 1 ? "Сохранить журнал" : "Следующее упражнение", () -> {
+        String nextLabel = liveJournalIndex == liveAnswers.length - 1 ? "Сохранить оба журнала" :
+                liveJournalIndex == exercisesPerAthlete - 1 ? "Перейти к Игорю" : "Следующее упражнение";
+        button(nextLabel, () -> {
             if (!captureLiveAnswer(true)) return;
-            if (liveJournalIndex == liveIndices.size() - 1) saveLiveJournal();
+            if (liveJournalIndex == liveAnswers.length - 1) saveLiveJournal();
             else { liveJournalIndex++; liveJournal(); }
         });
         if (liveJournalIndex > 0) secondary("Предыдущее упражнение", () -> {
@@ -490,17 +633,21 @@ public final class MainActivity extends Activity {
     }
 
     private void saveLiveJournal() {
-        List<String[]> records = new ArrayList<>();
-        for (int i = 0; i < liveIndices.size(); i++) {
-            ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(i));
+        List<WorkoutStore.NewEntry> records = new ArrayList<>();
+        int exercisesPerAthlete = liveIndices.size();
+        for (int i = 0; i < liveAnswers.length; i++) {
+            String athlete = i < exercisesPerAthlete ? WorkoutStore.KIRILL : WorkoutStore.IGOR;
+            ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(i % exercisesPerAthlete));
             String[] answer = liveAnswers[i];
-            records.add(new String[]{liveJournalDate, "A", exercise.name, answer[0], exercise.weeks[week - 1], answer[1], answer[2], ""});
+            records.add(new WorkoutStore.NewEntry(athlete,
+                    new String[]{liveJournalDate, "A", exercise.name, answer[0], exercise.weeks[week - 1], answer[1], answer[2], ""}));
         }
         try {
             store.addAll(records);
             begin("Журнал сохранён", "saved");
-            paragraph("Добавлено записей: " + records.size() + " · " + liveJournalDate);
-            button("Посмотреть записи", () -> entries(liveJournalDate));
+            paragraph("Добавлено по " + exercisesPerAthlete + " упражнений для Кирилла и Игоря · " + liveJournalDate);
+            button("Журнал Кирилла", () -> entries(WorkoutStore.KIRILL, liveJournalDate));
+            button("Журнал Игоря", () -> entries(WorkoutStore.IGOR, liveJournalDate));
             secondary("На главную", this::home);
         } catch (Exception error) {
             Toast.makeText(this, "Не удалось сохранить журнал: " + error.getMessage(), Toast.LENGTH_LONG).show();
@@ -578,8 +725,11 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if ("entries".equals(screen)) dates();
+        if ("entries".equals(screen)) dates(journalAthlete);
+        else if ("dates".equals(screen)) chooseAthleteForJournal();
         else if ("wizard".equals(screen) && step > 0) { captureWizardStep(); step--; wizard(); }
+        else if ("wizard".equals(screen)) chooseAthleteForEntry();
+        else if ("export_range".equals(screen)) chooseExportScope();
         else if ("live_log".equals(screen) && liveJournalIndex > 0) {
             captureLiveAnswer(false);
             liveJournalIndex--;
