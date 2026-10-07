@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import java.io.InputStream;
 import java.time.LocalDate;
@@ -110,6 +111,12 @@ public class MainActivityTest {
         Intent last = Shadows.shadowOf(activity).getNextStartedActivity();
         assertEquals(9, last.getIntExtra(VideoActivity.EXTRA_EXERCISE_INDEX, -1));
         assertEquals(names[9], last.getStringExtra(VideoActivity.EXTRA_EXERCISE_NAME));
+
+        VideoActivity player = Robolectric.buildActivity(VideoActivity.class, first).setup().get();
+        assertNotNull(find(player.getWindow().getDecorView(), SeekBar.class, null));
+        assertNotNull(find(player.getWindow().getDecorView(), Button.class, "−10 с"));
+        assertNotNull(find(player.getWindow().getDecorView(), Button.class, "+10 с"));
+        player.finish();
     }
 
     @Test public void manualEntryUsesOwnWeightAndNumericRepsAndCanBeDeleted() {

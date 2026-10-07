@@ -4,11 +4,15 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.MediaController;
+import android.widget.LinearLayout;
+import android.widget.SeekBar;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
@@ -22,6 +26,18 @@ public final class VideoActivity extends Activity {
     };
 
     private VideoView videoView;
+    private SeekBar timeline;
+    private TextView timeLabel;
+    private Button playButton;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable updateTimeline = new Runnable() {
+        @Override public void run() {
+            refreshTimeline();
+            handler.postDelayed(this, 250);
+        }
+    };
+    private boolean dragging;
+    private int duration;
 
     static int videoForIndex(int index) {
         return index >= 0 && index < VIDEOS.length ? VIDEOS[index] : 0;
@@ -61,16 +77,67 @@ public final class VideoActivity extends Activity {
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.START);
         page.addView(back, backLayout);
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setPadding(dp(12), dp(8), dp(12), dp(8));
+        controls.setBackgroundColor(0xB3000000);
+        FrameLayout.LayoutParams controlsLayout = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        page.addView(controls, controlsLayout);
+
+        timeline = new SeekBar(this);
+        timeline.setContentDescription("Перемотка видео");
+        timeline.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onStartTrackingTouch(SeekBar bar) { dragging = true; }
+            @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                if (fromUser) timeLabel.setText(formatTime(progress) + " / " + formatTime(duration));
+            }
+            @Override public void onStopTrackingTouch(SeekBar bar) {
+                videoView.seekTo(bar.getProgress());
+                dragging = false;
+                refreshTimeline();
+            }
+        });
+        controls.addView(timeline);
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setGravity(Gravity.CENTER_VERTICAL);
+        controls.addView(buttons);
+        Button rewind = new Button(this);
+        rewind.setText("−10 с");
+        rewind.setOnClickListener(view -> seekBy(-10_000));
+        buttons.addView(rewind);
+        playButton = new Button(this);
+        playButton.setText("Пауза");
+        playButton.setOnClickListener(view -> {
+            if (videoView.isPlaying()) videoView.pause();
+            else videoView.start();
+            refreshTimeline();
+        });
+        buttons.addView(playButton);
+        Button forward = new Button(this);
+        forward.setText("+10 с");
+        forward.setOnClickListener(view -> seekBy(10_000));
+        buttons.addView(forward);
+        timeLabel = new TextView(this);
+        timeLabel.setTextColor(Color.WHITE);
+        timeLabel.setText("0:00 / 0:00");
+        timeLabel.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        buttons.addView(timeLabel, new LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         setContentView(page);
 
-        MediaController controls = new MediaController(this);
-        controls.setAnchorView(videoView);
-        videoView.setMediaController(controls);
         videoView.setVideoURI(Uri.parse("android.resource://" + getPackageName() + "/" + video));
         videoView.setOnPreparedListener(player -> {
+            duration = Math.max(0, player.getDuration());
+            timeline.setMax(duration);
             videoView.start();
-            controls.show();
+            refreshTimeline();
+            handler.post(updateTimeline);
         });
+        videoView.setOnCompletionListener(player -> refreshTimeline());
         videoView.setOnErrorListener((player, what, extra) -> {
             Toast.makeText(this, "Не удалось воспроизвести видео", Toast.LENGTH_LONG).show();
             return true;
@@ -78,12 +145,43 @@ public final class VideoActivity extends Activity {
         videoView.requestFocus();
     }
 
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private static String formatTime(int milliseconds) {
+        int seconds = Math.max(0, milliseconds) / 1000;
+        return (seconds / 60) + ":" + String.format(java.util.Locale.ROOT, "%02d", seconds % 60);
+    }
+
+    private void seekBy(int milliseconds) {
+        videoView.seekTo(Math.max(0, Math.min(duration, videoView.getCurrentPosition() + milliseconds)));
+        refreshTimeline();
+    }
+
+    private void refreshTimeline() {
+        if (videoView == null || timeline == null) return;
+        int position = Math.max(0, videoView.getCurrentPosition());
+        if (!dragging) {
+            timeline.setProgress(position);
+            timeLabel.setText(formatTime(position) + " / " + formatTime(duration));
+        }
+        playButton.setText(videoView.isPlaying() ? "Пауза" : "Воспроизвести");
+    }
+
     @Override protected void onPause() {
+        handler.removeCallbacks(updateTimeline);
         if (videoView != null) videoView.pause();
         super.onPause();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        if (videoView != null && duration > 0) handler.post(updateTimeline);
+    }
+
     @Override protected void onDestroy() {
+        handler.removeCallbacks(updateTimeline);
         if (videoView != null) videoView.stopPlayback();
         super.onDestroy();
     }
