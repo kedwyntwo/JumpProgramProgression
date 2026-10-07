@@ -13,6 +13,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.SeekBar;
+import android.widget.VideoView;
 import android.widget.TextView;
 import java.io.InputStream;
 import java.time.LocalDate;
@@ -113,27 +114,12 @@ public class MainActivityTest {
         assertEquals(names[9], last.getStringExtra(VideoActivity.EXTRA_EXERCISE_NAME));
 
         VideoActivity player = Robolectric.buildActivity(VideoActivity.class, first).setup().get();
-        SeekBar seekBar = find(player.getWindow().getDecorView(), SeekBar.class, null);
-        assertNotNull(seekBar);
-        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
-        View tapSurface = null;
-        for (View view : all(player.getWindow().getDecorView(), View.class)) {
-            if ("Показать или скрыть управление видео".equals(view.getContentDescription())) {
-                tapSurface = view;
-                break;
-            }
-        }
-        assertNotNull(tapSurface);
-        tapSurface.performClick();
-        assertEquals(View.VISIBLE, ((View) seekBar.getParent()).getVisibility());
-        tapSurface.performClick();
-        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
-        tapSurface.performClick();
-        Shadows.shadowOf(Looper.getMainLooper()).idleFor(4, java.util.concurrent.TimeUnit.SECONDS);
-        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
-        assertNotNull(find(player.getWindow().getDecorView(), Button.class, "−10 с"));
-        assertNotNull(find(player.getWindow().getDecorView(), Button.class, "+10 с"));
-        player.finish();
+        assertNotNull(find(player.getWindow().getDecorView(), VideoView.class, null));
+        assertNull(find(player.getWindow().getDecorView(), SeekBar.class, null));
+        assertNull(find(player.getWindow().getDecorView(), Button.class, "−10 с"));
+        assertNull(find(player.getWindow().getDecorView(), Button.class, "+10 с"));
+        find(player.getWindow().getDecorView(), Button.class, "← К тренировке").performClick();
+        assertTrue(player.isFinishing());
     }
 
     @Test public void manualEntryUsesOwnWeightAndNumericRepsAndCanBeDeleted() {
