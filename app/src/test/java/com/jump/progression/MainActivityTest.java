@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
+import java.io.InputStream;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,6 +71,37 @@ public class MainActivityTest {
         assertNotNull(dialog);
         dialog.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
+    }
+
+    @Test public void liveWorkoutOpensTheMatchingOfflineVideo() throws Exception {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        ProgramA program = new ProgramA(activity);
+        String[] names = {
+                "Мёртвый жук", "Ротация в блоке", "Snap Down", "Snap Down → Box Jump",
+                "Болгарский сплит-присед", "Румынская тяга на одной ноге",
+                "Зашагивание на тумбу + контролируемое опускание", "Жим гантелей лёжа",
+                "Тяга гантели с упором на скамью", "Подъём на носок одной ногой"
+        };
+        assertEquals(names.length, program.exercises.size());
+        for (int i = 0; i < names.length; i++) {
+            assertEquals(names[i], program.exercises.get(i).name);
+            try (InputStream video = activity.getResources().openRawResource(VideoActivity.videoForIndex(i))) {
+                byte[] header = new byte[12];
+                assertEquals(12, video.read(header));
+                assertEquals("ftyp", new String(header, 4, 4, java.nio.charset.StandardCharsets.US_ASCII));
+            }
+        }
+        click(activity, "Live-тренировка");
+        click(activity, "Посмотреть видео упражнения");
+        Intent first = Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals(VideoActivity.class.getName(), first.getComponent().getClassName());
+        assertEquals(0, first.getIntExtra(VideoActivity.EXTRA_EXERCISE_INDEX, -1));
+        assertEquals(names[0], first.getStringExtra(VideoActivity.EXTRA_EXERCISE_NAME));
+        for (int i = 1; i < names.length; i++) click(activity, "Следующее упражнение");
+        click(activity, "Посмотреть видео упражнения");
+        Intent last = Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals(9, last.getIntExtra(VideoActivity.EXTRA_EXERCISE_INDEX, -1));
+        assertEquals(names[9], last.getStringExtra(VideoActivity.EXTRA_EXERCISE_NAME));
     }
 
     @Test public void manualEntryUsesOwnWeightAndNumericRepsAndCanBeDeleted() {

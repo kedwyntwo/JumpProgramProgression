@@ -506,6 +506,12 @@ public final class MainActivity extends Activity {
         page.addView(text("Неделя " + week + ": " + exercise.weeks[week - 1], 22, INK, true));
         gap(10);
         paragraph("Отдых: " + exercise.rest + "\n\n" + exercise.focus);
+        secondary("Посмотреть видео упражнения", () -> {
+            Intent intent = new Intent(this, VideoActivity.class);
+            intent.putExtra(VideoActivity.EXTRA_EXERCISE_INDEX, currentExercise);
+            intent.putExtra(VideoActivity.EXTRA_EXERCISE_NAME, exercise.name);
+            startActivity(intent);
+        });
         timerLabel = text("", 22, GREEN, true);
         timerLabel.setGravity(Gravity.CENTER_HORIZONTAL);
         page.addView(timerLabel);
