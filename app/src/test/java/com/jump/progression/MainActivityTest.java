@@ -113,7 +113,24 @@ public class MainActivityTest {
         assertEquals(names[9], last.getStringExtra(VideoActivity.EXTRA_EXERCISE_NAME));
 
         VideoActivity player = Robolectric.buildActivity(VideoActivity.class, first).setup().get();
-        assertNotNull(find(player.getWindow().getDecorView(), SeekBar.class, null));
+        SeekBar seekBar = find(player.getWindow().getDecorView(), SeekBar.class, null);
+        assertNotNull(seekBar);
+        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
+        View tapSurface = null;
+        for (View view : all(player.getWindow().getDecorView(), View.class)) {
+            if ("Показать или скрыть управление видео".equals(view.getContentDescription())) {
+                tapSurface = view;
+                break;
+            }
+        }
+        assertNotNull(tapSurface);
+        tapSurface.performClick();
+        assertEquals(View.VISIBLE, ((View) seekBar.getParent()).getVisibility());
+        tapSurface.performClick();
+        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
+        tapSurface.performClick();
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(4, java.util.concurrent.TimeUnit.SECONDS);
+        assertEquals(View.GONE, ((View) seekBar.getParent()).getVisibility());
         assertNotNull(find(player.getWindow().getDecorView(), Button.class, "−10 с"));
         assertNotNull(find(player.getWindow().getDecorView(), Button.class, "+10 с"));
         player.finish();

@@ -26,9 +26,12 @@ public final class VideoActivity extends Activity {
     };
 
     private VideoView videoView;
+    private LinearLayout controls;
     private SeekBar timeline;
     private TextView timeLabel;
     private Button playButton;
+    private boolean dragging;
+    private int duration;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable updateTimeline = new Runnable() {
         @Override public void run() {
@@ -36,8 +39,9 @@ public final class VideoActivity extends Activity {
             handler.postDelayed(this, 250);
         }
     };
-    private boolean dragging;
-    private int duration;
+    private final Runnable hideControls = () -> {
+        if (!dragging && controls != null) controls.setVisibility(View.GONE);
+    };
 
     static int videoForIndex(int index) {
         return index >= 0 && index < VIDEOS.length ? VIDEOS[index] : 0;
@@ -68,6 +72,15 @@ public final class VideoActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
                 Gravity.CENTER));
 
+        View tapSurface = new View(this);
+        tapSurface.setContentDescription("Показать или скрыть управление видео");
+        tapSurface.setOnClickListener(view -> {
+            if (controls.getVisibility() == View.VISIBLE) hideControlsNow();
+            else showControls();
+        });
+        page.addView(tapSurface, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
         Button back = new Button(this);
         back.setText("← К тренировке");
         back.setTextColor(Color.WHITE);
@@ -78,10 +91,11 @@ public final class VideoActivity extends Activity {
                 Gravity.TOP | Gravity.START);
         page.addView(back, backLayout);
 
-        LinearLayout controls = new LinearLayout(this);
+        controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         controls.setPadding(dp(12), dp(8), dp(12), dp(8));
         controls.setBackgroundColor(0xB3000000);
+        controls.setVisibility(View.GONE);
         FrameLayout.LayoutParams controlsLayout = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM);
@@ -90,7 +104,10 @@ public final class VideoActivity extends Activity {
         timeline = new SeekBar(this);
         timeline.setContentDescription("Перемотка видео");
         timeline.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onStartTrackingTouch(SeekBar bar) { dragging = true; }
+            @Override public void onStartTrackingTouch(SeekBar bar) {
+                dragging = true;
+                handler.removeCallbacks(hideControls);
+            }
             @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                 if (fromUser) timeLabel.setText(formatTime(progress) + " / " + formatTime(duration));
             }
@@ -98,6 +115,7 @@ public final class VideoActivity extends Activity {
                 videoView.seekTo(bar.getProgress());
                 dragging = false;
                 refreshTimeline();
+                showControls();
             }
         });
         controls.addView(timeline);
@@ -107,7 +125,7 @@ public final class VideoActivity extends Activity {
         controls.addView(buttons);
         Button rewind = new Button(this);
         rewind.setText("−10 с");
-        rewind.setOnClickListener(view -> seekBy(-10_000));
+        rewind.setOnClickListener(view -> { seekBy(-10_000); showControls(); });
         buttons.addView(rewind);
         playButton = new Button(this);
         playButton.setText("Пауза");
@@ -115,11 +133,12 @@ public final class VideoActivity extends Activity {
             if (videoView.isPlaying()) videoView.pause();
             else videoView.start();
             refreshTimeline();
+            showControls();
         });
         buttons.addView(playButton);
         Button forward = new Button(this);
         forward.setText("+10 с");
-        forward.setOnClickListener(view -> seekBy(10_000));
+        forward.setOnClickListener(view -> { seekBy(10_000); showControls(); });
         buttons.addView(forward);
         timeLabel = new TextView(this);
         timeLabel.setTextColor(Color.WHITE);
@@ -149,6 +168,17 @@ public final class VideoActivity extends Activity {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
 
+    private void showControls() {
+        controls.setVisibility(View.VISIBLE);
+        handler.removeCallbacks(hideControls);
+        handler.postDelayed(hideControls, 4_000);
+    }
+
+    private void hideControlsNow() {
+        handler.removeCallbacks(hideControls);
+        controls.setVisibility(View.GONE);
+    }
+
     private static String formatTime(int milliseconds) {
         int seconds = Math.max(0, milliseconds) / 1000;
         return (seconds / 60) + ":" + String.format(java.util.Locale.ROOT, "%02d", seconds % 60);
@@ -171,6 +201,7 @@ public final class VideoActivity extends Activity {
 
     @Override protected void onPause() {
         handler.removeCallbacks(updateTimeline);
+        handler.removeCallbacks(hideControls);
         if (videoView != null) videoView.pause();
         super.onPause();
     }
@@ -178,10 +209,12 @@ public final class VideoActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         if (videoView != null && duration > 0) handler.post(updateTimeline);
+        if (controls != null && controls.getVisibility() == View.VISIBLE) showControls();
     }
 
     @Override protected void onDestroy() {
         handler.removeCallbacks(updateTimeline);
+        handler.removeCallbacks(hideControls);
         if (videoView != null) videoView.stopPlayback();
         super.onDestroy();
     }
