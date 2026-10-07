@@ -5,10 +5,10 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.Button;
-import android.widget.LinearLayout;
+import android.widget.FrameLayout;
 import android.widget.MediaController;
-import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.VideoView;
 
@@ -36,26 +36,31 @@ public final class VideoActivity extends Activity {
             return;
         }
 
-        LinearLayout page = new LinearLayout(this);
-        page.setOrientation(LinearLayout.VERTICAL);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+
+        FrameLayout page = new FrameLayout(this);
         page.setBackgroundColor(Color.BLACK);
-        page.setPadding(16, 16, 16, 16);
-
-        Button back = new Button(this);
-        back.setText("Вернуться к тренировке");
-        back.setOnClickListener(view -> finish());
-        page.addView(back);
-
-        TextView title = new TextView(this);
-        title.setText(getIntent().getStringExtra(EXTRA_EXERCISE_NAME));
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(20);
-        title.setGravity(Gravity.CENTER);
-        page.addView(title);
 
         videoView = new VideoView(this);
-        page.addView(videoView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+        page.addView(videoView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER));
+
+        Button back = new Button(this);
+        back.setText("← К тренировке");
+        back.setTextColor(Color.WHITE);
+        back.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0x99000000));
+        back.setOnClickListener(view -> finish());
+        FrameLayout.LayoutParams backLayout = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        page.addView(back, backLayout);
         setContentView(page);
 
         MediaController controls = new MediaController(this);

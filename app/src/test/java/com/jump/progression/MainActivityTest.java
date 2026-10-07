@@ -5,6 +5,8 @@ import static org.junit.Assert.*;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.ComponentName;
+import android.content.pm.ActivityInfo;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
@@ -76,6 +78,12 @@ public class MainActivityTest {
     @Test public void liveWorkoutOpensTheMatchingOfflineVideo() throws Exception {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         ProgramA program = new ProgramA(activity);
+        ActivityInfo videoScreen = activity.getPackageManager().getActivityInfo(
+                new ComponentName(activity, VideoActivity.class), 0);
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE, videoScreen.screenOrientation);
+        ActivityInfo workoutScreen = activity.getPackageManager().getActivityInfo(
+                new ComponentName(activity, MainActivity.class), 0);
+        assertEquals(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT, workoutScreen.screenOrientation);
         String[] names = {
                 "Мёртвый жук", "Ротация в блоке", "Snap Down", "Snap Down → Box Jump",
                 "Болгарский сплит-присед", "Румынская тяга на одной ноге",
