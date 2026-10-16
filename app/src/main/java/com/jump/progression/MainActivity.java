@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.app.DatePickerDialog;
 import android.content.Intent;
 import android.content.ClipData;
+import android.content.ActivityNotFoundException;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioAttributes;
@@ -16,6 +17,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.CountDownTimer;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -30,18 +32,22 @@ import java.io.IOException;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Calendar;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import org.json.JSONException;
 
 public final class MainActivity extends Activity {
     private static final int SAVE_XLS_REQUEST = 4101;
     private static final int PICK_VIDEO_REQUEST = 4102;
     private static final int SAVE_REPORT_REQUEST = 4103;
+    private static final int CAPTURE_VIDEO_REQUEST = 4104;
     private static final String[] LABELS = {"Дата", "Тренировка", "Упражнение", "Вес", "Подходы × повторы", "RPE", "Боль / дискомфорт 0–10", "Комментарий"};
     private static final String[] HINTS = {"ГГГГ-ММ-ДД", "Например, A", "Название упражнения", "Вес в кг", "", "0–10", "0–10", "Необязательно"};
     private static final int INK = Color.rgb(29, 48, 48);
@@ -67,9 +73,12 @@ public final class MainActivity extends Activity {
     private String[][] liveAnswers;
     private String[] liveVideoUris;
     private String[] liveSetsReps;
+    private final Map<String, String> capturedVideoUris = new HashMap<>();
+    private String pendingCaptureAthlete, pendingCaptureFileName;
+    private int pendingCaptureExercise;
     private int liveJournalIndex;
     private String liveJournalDate;
-    private EditText liveWeightField, liveRpeField, livePainField, liveSetsRepsField;
+    private EditText liveWeightField, liveRpeField, livePainField, liveSetsRepsField, liveCommentField;
     private boolean liveOwnWeight;
     private CountDownTimer timer;
     private TextView timerLabel;
@@ -103,6 +112,11 @@ public final class MainActivity extends Activity {
             liveSetsReps = savedInstanceState.getStringArray("live_sets_reps");
             liveJournalIndex = savedInstanceState.getInt("live_journal_index");
             liveJournalDate = savedInstanceState.getString("live_journal_date");
+            HashMap<String, String> restoredCaptures = (HashMap<String, String>) savedInstanceState.getSerializable("captured_videos");
+            if (restoredCaptures != null) capturedVideoUris.putAll(restoredCaptures);
+            pendingCaptureAthlete = savedInstanceState.getString("pending_capture_athlete");
+            pendingCaptureFileName = savedInstanceState.getString("pending_capture_file");
+            pendingCaptureExercise = savedInstanceState.getInt("pending_capture_exercise");
         }
         store = new WorkoutStore(this);
         try {
@@ -552,11 +566,19 @@ public final class MainActivity extends Activity {
         state.putStringArray("live_sets_reps", liveSetsReps);
         state.putInt("live_journal_index", liveJournalIndex);
         state.putString("live_journal_date", liveJournalDate);
+        state.putSerializable("captured_videos", new HashMap<>(capturedVideoUris));
+        state.putString("pending_capture_athlete", pendingCaptureAthlete);
+        state.putString("pending_capture_file", pendingCaptureFileName);
+        state.putInt("pending_capture_exercise", pendingCaptureExercise);
         super.onSaveInstanceState(state);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == CAPTURE_VIDEO_REQUEST) {
+            finishCapture(resultCode, data);
+            return;
+        }
         if (requestCode == PICK_VIDEO_REQUEST) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 try {
@@ -642,6 +664,7 @@ public final class MainActivity extends Activity {
     }
 
     private void beginLive(String code) {
+        capturedVideoUris.clear();
         programCode = code;
         program = "B".equals(code) ? programB : programA;
         week = 1;
@@ -705,6 +728,10 @@ public final class MainActivity extends Activity {
             intent.putExtra(VideoActivity.EXTRA_EXERCISE_NAME, exercise.name);
             startActivity(intent);
         });
+        secondary("Снять видео", this::chooseCaptureAthlete);
+        for (String athlete : store.profiles())
+            if (capturedVideoUris.containsKey(captureKey(athlete, currentExercise)))
+                paragraph("Видео снято: " + athlete);
         timerLabel = text("", 22, GREEN, true);
         timerLabel.setGravity(Gravity.CENTER_HORIZONTAL);
         page.addView(timerLabel);
@@ -736,6 +763,99 @@ public final class MainActivity extends Activity {
                     () -> { currentExercise = index; live(); });
         }
         secondary("На главную", () -> { if (completedCount() > 0) offerLiveJournal(); else home(); });
+    }
+
+    private String captureKey(String athlete, int exerciseIndex) {
+        return athlete + "\u0000" + exerciseIndex;
+    }
+
+    private void chooseCaptureAthlete() {
+        List<String> profiles = store.profiles();
+        if (profiles.isEmpty()) {
+            Toast.makeText(this, "Сначала создайте профиль для видео", Toast.LENGTH_LONG).show();
+        } else if (profiles.size() == 1) {
+            startCapture(profiles.get(0));
+        } else {
+            new AlertDialog.Builder(this).setTitle("Для кого снять видео?")
+                    .setItems(profiles.toArray(new String[0]), (dialog, which) -> startCapture(profiles.get(which)))
+                    .setNegativeButton("Отмена", null).show();
+        }
+    }
+
+    private void startCapture(String athlete) {
+        File directory = new File(getFilesDir(), "recordings");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            Toast.makeText(this, "Не удалось подготовить место для видео", Toast.LENGTH_LONG).show();
+            return;
+        }
+        File file;
+        try {
+            file = File.createTempFile("attempt_", ".mp4", directory);
+        } catch (IOException error) {
+            Toast.makeText(this, "Не удалось подготовить видео: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        Uri output = CameraVideoProvider.uriFor(this, file);
+        Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, output);
+        intent.setClipData(ClipData.newUri(getContentResolver(), "Видео упражнения", output));
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        pendingCaptureAthlete = athlete;
+        pendingCaptureExercise = currentExercise;
+        pendingCaptureFileName = file.getName();
+        try {
+            startActivityForResult(intent, CAPTURE_VIDEO_REQUEST);
+        } catch (ActivityNotFoundException error) {
+            file.delete();
+            pendingCaptureFileName = null;
+            Toast.makeText(this, "На устройстве нет приложения для съёмки видео", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void finishCapture(int resultCode, Intent data) {
+        if (pendingCaptureFileName == null) return;
+        File file = new File(new File(getFilesDir(), "recordings"), pendingCaptureFileName);
+        String athlete = pendingCaptureAthlete;
+        int exerciseIndex = pendingCaptureExercise;
+        pendingCaptureFileName = null;
+        pendingCaptureAthlete = null;
+        if (resultCode != RESULT_OK) {
+            file.delete();
+            return;
+        }
+        if (file.length() > 0) {
+            saveCapture(athlete, exerciseIndex, file);
+        } else if (data != null && data.getData() != null) {
+            Uri source = data.getData();
+            begin("Сохраняем видео", "saving_video");
+            paragraph("Копируем запись с камеры в журнал. Пожалуйста, подождите.");
+            new Thread(() -> {
+                try (InputStream input = getContentResolver().openInputStream(source);
+                     OutputStream output = new FileOutputStream(file)) {
+                    if (input == null) throw new IOException("Камера не вернула видео");
+                    byte[] buffer = new byte[64 * 1024];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                    if (file.length() == 0) throw new IOException("Видео пустое");
+                    runOnUiThread(() -> saveCapture(athlete, exerciseIndex, file));
+                } catch (Exception error) {
+                    file.delete();
+                    runOnUiThread(() -> {
+                        Toast.makeText(this, "Не удалось сохранить видео: " + error.getMessage(), Toast.LENGTH_LONG).show();
+                        live();
+                    });
+                }
+            }).start();
+        } else {
+            file.delete();
+            Toast.makeText(this, "Камера не сохранила видео", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void saveCapture(String athlete, int exerciseIndex, File file) {
+        capturedVideoUris.put(captureKey(athlete, exerciseIndex), CameraVideoProvider.uriFor(this, file).toString());
+        Toast.makeText(this, "Видео сохранено для " + athlete, Toast.LENGTH_SHORT).show();
+        live();
     }
 
     private void offerLiveJournal() {
@@ -780,11 +900,12 @@ public final class MainActivity extends Activity {
     private void startLiveJournal() {
         liveIndices = new ArrayList<>();
         for (int i = 0; i < completed.length; i++) if (completed[i]) liveIndices.add(i);
-        liveAnswers = new String[liveIndices.size() * liveAthletes.size()][3];
+        liveAnswers = new String[liveIndices.size() * liveAthletes.size()][4];
         liveVideoUris = new String[liveAnswers.length];
         liveSetsReps = new String[liveAnswers.length];
-        for (String[] answer : liveAnswers) for (int i = 0; i < 3; i++) answer[i] = "";
-        for (int i = 0; i < liveVideoUris.length; i++) liveVideoUris[i] = "";
+        for (String[] answer : liveAnswers) for (int i = 0; i < 4; i++) answer[i] = "";
+        for (int i = 0; i < liveVideoUris.length; i++)
+            liveVideoUris[i] = capturedVideoUris.getOrDefault(captureKey(liveAthletes.get(i / liveIndices.size()), liveIndices.get(i % liveIndices.size())), "");
         for (int i = 0; i < liveSetsReps.length; i++)
             liveSetsReps[i] = program.exercises.get(liveIndices.get(i % liveIndices.size())).weeks[week - 1];
         liveJournalDate = LocalDate.now().toString();
@@ -825,6 +946,8 @@ public final class MainActivity extends Activity {
         liveRpeField = input("0–10", answer[1], InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         page.addView(text("Боль / дискомфорт", 17, INK, true));
         livePainField = input("0–10", answer[2], InputType.TYPE_CLASS_NUMBER);
+        page.addView(text("Комментарий", 17, INK, true));
+        liveCommentField = input("Необязательно", answer[3], InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         videoPickerControls(liveVideoUris[liveJournalIndex]);
         String nextLabel = liveJournalIndex == liveAnswers.length - 1 ? "Сохранить журнал" :
                 liveJournalIndex % exercisesPerAthlete == exercisesPerAthlete - 1
@@ -856,6 +979,7 @@ public final class MainActivity extends Activity {
         liveAnswers[liveJournalIndex][0] = liveOwnWeight || weight.isEmpty() ? weight : weight.replace(',', '.') + " кг";
         liveAnswers[liveJournalIndex][1] = rpe;
         liveAnswers[liveJournalIndex][2] = pain;
+        liveAnswers[liveJournalIndex][3] = liveCommentField.getText().toString().trim();
         liveSetsReps[liveJournalIndex] = setsReps;
         return true;
     }
@@ -876,7 +1000,7 @@ public final class MainActivity extends Activity {
             ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(i % exercisesPerAthlete));
             String[] answer = liveAnswers[i];
             records.add(new WorkoutStore.NewEntry(athlete,
-                    new String[]{liveJournalDate, programCode, exercise.name, answer[0], liveSetsReps[i], answer[1], answer[2], ""},
+                    new String[]{liveJournalDate, programCode, exercise.name, answer[0], liveSetsReps[i], answer[1], answer[2], answer[3]},
                     liveVideoUris[i]));
         }
         try {

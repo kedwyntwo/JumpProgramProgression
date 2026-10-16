@@ -6,8 +6,10 @@ import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ComponentName;
+import android.net.Uri;
 import android.content.pm.ActivityInfo;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -17,6 +19,7 @@ import android.widget.SeekBar;
 import android.widget.VideoView;
 import android.widget.TextView;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -192,6 +195,7 @@ public class MainActivityTest {
         List<EditText> first = all(root(activity), EditText.class);
         first.get(2).setText("7");
         first.get(3).setText("0");
+        first.get(4).setText("Техника хорошая");
         click(activity, "Следующее упражнение");
         List<EditText> second = all(root(activity), EditText.class);
         second.get(1).setText("8");
@@ -215,7 +219,7 @@ public class MainActivityTest {
         List<WorkoutStore.Entry> igor = store.onDate("Борис", today);
         assertEquals(2, kirill.size());
         assertEquals(2, igor.size());
-        assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "7", "0", ""}, kirill.get(0).values);
+        assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "7", "0", "Техника хорошая"}, kirill.get(0).values);
         assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "8 кг", "3×8/сторона", "8", "1", ""}, kirill.get(1).values);
         assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "6", "0", ""}, igor.get(0).values);
         assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "10 кг", "3×8/сторона", "9", "2", ""}, igor.get(1).values);
@@ -225,6 +229,44 @@ public class MainActivityTest {
         click(activity, today);
         assertNotNull(find(root(activity), TextView.class, "Вес: 8 кг"));
         assertNull(find(root(activity), TextView.class, "Вес: 10 кг"));
+    }
+
+    @Test public void liveCameraVideoIsAttachedToTheCompletedExercise() throws Exception {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        activity.deleteDatabase("workouts.db");
+        assertTrue(new WorkoutStore(activity).createProfile("Анна"));
+        click(activity, "Live-тренировка");
+        click(activity, "Программа А");
+        click(activity, "Снять видео");
+        ShadowActivity.IntentForResult camera = Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertEquals(MediaStore.ACTION_VIDEO_CAPTURE, camera.intent.getAction());
+        Uri output = camera.intent.getParcelableExtra(MediaStore.EXTRA_OUTPUT);
+        assertEquals("content", output.getScheme());
+        try (OutputStream video = activity.getContentResolver().openOutputStream(output)) {
+            assertNotNull(video);
+            video.write(new byte[]{0, 0, 0, 8, 102, 116, 121, 112});
+        }
+        activity.onActivityResult(4104, MainActivity.RESULT_OK, null);
+        assertNotNull(find(root(activity), TextView.class, "Видео снято: Анна"));
+        click(activity, "Упражнение выполнено");
+        click(activity, "Завершить тренировку");
+        confirm();
+        all(root(activity), CheckBox.class).get(0).setChecked(true);
+        click(activity, "Заполнить журнал");
+        assertNotNull(find(root(activity), TextView.class, "Видео исполнения прикреплено"));
+        click(activity, "Свой вес");
+        List<EditText> fields = all(root(activity), EditText.class);
+        fields.get(2).setText("7");
+        fields.get(3).setText("0");
+        fields.get(4).setText("Снято на тренировке");
+        click(activity, "Сохранить журнал");
+        WorkoutStore.Entry saved = new WorkoutStore(activity).onDate("Анна", LocalDate.now().toString()).get(0);
+        assertEquals("Снято на тренировке", saved.values[7]);
+        assertEquals(output.toString(), saved.videoUri);
+        try (InputStream video = activity.getContentResolver().openInputStream(Uri.parse(saved.videoUri))) {
+            assertNotNull(video);
+            assertEquals(0, video.read());
+        }
     }
 
     @Test public void profileManagementAndProgramBUseMatchingVideos() throws Exception {
