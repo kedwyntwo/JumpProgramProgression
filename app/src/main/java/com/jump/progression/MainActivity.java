@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
 import android.content.Intent;
+import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.media.AudioAttributes;
@@ -39,6 +40,8 @@ import org.json.JSONException;
 
 public final class MainActivity extends Activity {
     private static final int SAVE_XLS_REQUEST = 4101;
+    private static final int PICK_VIDEO_REQUEST = 4102;
+    private static final int SAVE_REPORT_REQUEST = 4103;
     private static final String[] LABELS = {"Дата", "Тренировка", "Упражнение", "Вес", "Подходы × повторы", "RPE", "Боль / дискомфорт 0–10", "Комментарий"};
     private static final String[] HINTS = {"ГГГГ-ММ-ДД", "Например, A", "Название упражнения", "Вес в кг", "", "0–10", "0–10", "Необязательно"};
     private static final int INK = Color.rgb(29, 48, 48);
@@ -51,18 +54,22 @@ public final class MainActivity extends Activity {
     private LinearLayout page;
     private String screen = "home";
     private String[] draft = new String[8];
+    private String draftVideoUri = "";
     private String entryAthlete;
     private String journalAthlete;
     private String exportAthlete, exportFrom, exportTo;
+    private boolean exportZip;
     private EditText exportFromField, exportToField;
     private int step = 0, week = 1, currentExercise = 0;
     private EditText field, setsField, repsField;
     private boolean[] completed;
     private List<Integer> liveIndices = new ArrayList<>();
     private String[][] liveAnswers;
+    private String[] liveVideoUris;
+    private String[] liveSetsReps;
     private int liveJournalIndex;
     private String liveJournalDate;
-    private EditText liveWeightField, liveRpeField, livePainField;
+    private EditText liveWeightField, liveRpeField, livePainField, liveSetsRepsField;
     private boolean liveOwnWeight;
     private CountDownTimer timer;
     private TextView timerLabel;
@@ -74,22 +81,45 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (savedInstanceState != null) {
+            screen = savedInstanceState.getString("screen", "home");
             exportAthlete = savedInstanceState.getString("export_athlete");
             exportFrom = savedInstanceState.getString("export_from");
             exportTo = savedInstanceState.getString("export_to");
+            exportZip = savedInstanceState.getBoolean("export_zip");
+            draft = savedInstanceState.getStringArray("draft");
+            draftVideoUri = savedInstanceState.getString("draft_video_uri", "");
+            entryAthlete = savedInstanceState.getString("entry_athlete");
+            step = savedInstanceState.getInt("step");
+            programCode = savedInstanceState.getString("program_code", "A");
+            week = savedInstanceState.getInt("week", 1);
+            currentExercise = savedInstanceState.getInt("current_exercise");
+            completed = savedInstanceState.getBooleanArray("completed");
+            ArrayList<Integer> restoredIndices = savedInstanceState.getIntegerArrayList("live_indices");
+            if (restoredIndices != null) liveIndices = restoredIndices;
+            ArrayList<String> restoredAthletes = savedInstanceState.getStringArrayList("live_athletes");
+            if (restoredAthletes != null) liveAthletes.addAll(restoredAthletes);
+            liveAnswers = (String[][]) savedInstanceState.getSerializable("live_answers");
+            liveVideoUris = savedInstanceState.getStringArray("live_video_uris");
+            liveSetsReps = savedInstanceState.getStringArray("live_sets_reps");
+            liveJournalIndex = savedInstanceState.getInt("live_journal_index");
+            liveJournalDate = savedInstanceState.getString("live_journal_date");
         }
         store = new WorkoutStore(this);
         try {
             programA = new ProgramA(this, "A");
             programB = new ProgramA(this, "B");
-            program = programA;
+            program = "B".equals(programCode) ? programB : programA;
         } catch (IOException | JSONException error) {
             new android.app.AlertDialog.Builder(this).setTitle("Ошибка программы")
                     .setMessage("Не удалось загрузить упражнения: " + error.getMessage())
                     .setPositiveButton("Закрыть", (dialog, which) -> finish()).show();
             return;
         }
-        home();
+        if ("wizard".equals(screen) && draft != null && entryAthlete != null) wizard();
+        else if ("live_log".equals(screen) && liveAnswers != null && liveVideoUris != null && liveSetsReps != null) liveJournal();
+        else if ("live".equals(screen) && completed != null) live();
+        else if ("export_range".equals(screen)) exportRange(exportAthlete);
+        else home();
     }
 
     private int dp(int amount) { return (int) (amount * getResources().getDisplayMetrics().density + 0.5f); }
@@ -162,7 +192,8 @@ public final class MainActivity extends Activity {
         button("Создать запись тренировки", this::chooseAthleteForEntry);
         button("Журнал тренировок", this::chooseAthleteForJournal);
         button("Live-тренировка", this::startLive);
-        button("Выгрузить XLS", this::chooseExportScope);
+        button("Выгрузить XLS", () -> { exportZip = false; chooseExportScope(); });
+        button("Отчёт для тренера (ZIP)", () -> { exportZip = true; chooseExportScope(); });
         gap(12);
         paragraph("Записи хранятся только на этом устройстве.");
     }
@@ -202,6 +233,7 @@ public final class MainActivity extends Activity {
     private void newEntry(String[] previous, String athlete) {
         entryAthlete = athlete;
         draft = new String[8];
+        draftVideoUri = "";
         draft[0] = previous == null ? LocalDate.now().toString() : previous[0];
         draft[1] = previous == null ? "A" : previous[1];
         draft[2] = previous == null ? program.exercises.get(0).name : "";
@@ -246,6 +278,7 @@ public final class MainActivity extends Activity {
                     secondary(exercise.name, () -> field.setText(exercise.name));
             }
         }
+        if (step == 7) videoPickerControls(draftVideoUri);
         button(step == LABELS.length - 1 ? "Сохранить запись" : "Далее", () -> {
             captureWizardStep();
             if (!validStep()) return;
@@ -265,6 +298,42 @@ public final class MainActivity extends Activity {
         page.addView(edit, new LinearLayout.LayoutParams(-1, type == (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE) ? dp(110) : dp(60)));
         gap(8);
         return edit;
+    }
+
+    private void videoPickerControls(String videoUri) {
+        if (videoUri.isEmpty()) {
+            secondary("Прикрепить видео исполнения", this::pickOwnVideo);
+        } else {
+            paragraph("Видео исполнения прикреплено");
+            secondary("Заменить видео", this::pickOwnVideo);
+            secondary("Убрать видео", () -> {
+                if ("wizard".equals(screen)) {
+                    captureWizardStep();
+                    draftVideoUri = "";
+                    wizard();
+                } else {
+                    captureLiveAnswer(false);
+                    liveVideoUris[liveJournalIndex] = "";
+                    liveJournal();
+                }
+            });
+        }
+    }
+
+    private void pickOwnVideo() {
+        if ("wizard".equals(screen)) captureWizardStep();
+        if ("live_log".equals(screen)) captureLiveAnswer(false);
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("video/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_VIDEO_REQUEST);
+    }
+
+    private void openOwnVideo(String videoUri) {
+        Intent intent = new Intent(this, VideoActivity.class);
+        intent.putExtra(VideoActivity.EXTRA_VIDEO_URI, videoUri);
+        startActivity(intent);
     }
 
     private void captureWizardStep() {
@@ -335,7 +404,7 @@ public final class MainActivity extends Activity {
 
     private void save() {
         try {
-            store.add(entryAthlete, draft);
+            store.add(entryAthlete, draft, draftVideoUri);
             String[] saved = draft.clone();
             begin("Запись сохранена", "saved");
             paragraph(entryAthlete + " · " + saved[0] + " · " + saved[2]);
@@ -379,6 +448,7 @@ public final class MainActivity extends Activity {
                 page.addView(value);
                 gap(4);
             }
+            if (!entry.videoUri.isEmpty()) secondary("Смотреть видео исполнения", () -> openOwnVideo(entry.videoUri));
             secondary("Удалить запись · " + row[2], () -> new AlertDialog.Builder(this)
                     .setTitle("Удалить запись?")
                     .setMessage(row[2] + " · " + row[0] + "\nДействие нельзя отменить.")
@@ -410,7 +480,7 @@ public final class MainActivity extends Activity {
     }
 
     private void chooseExportScope() {
-        begin("Выгрузить записи в XLS", "export_scope");
+        begin(exportZip ? "Отчёт для тренера (ZIP)" : "Выгрузить записи в XLS", "export_scope");
         paragraph("Сначала выберите, чьи записи включить в файл.");
         for (String athlete : store.profiles()) button(athlete, () -> exportRange(athlete));
         button("Все записи", () -> exportRange(null));
@@ -447,14 +517,17 @@ public final class MainActivity extends Activity {
             String scope = athlete == null ? "all" : "profile";
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("application/vnd.ms-excel");
-            intent.putExtra(Intent.EXTRA_TITLE, "training-" + scope + "-" + from + "-" + to + ".xls");
-            startActivityForResult(intent, SAVE_XLS_REQUEST);
+            intent.setType(exportZip ? "application/zip" : "application/vnd.ms-excel");
+            intent.putExtra(Intent.EXTRA_TITLE, "training-" + scope + "-" + from + "-" + to + (exportZip ? ".zip" : ".xls"));
+            startActivityForResult(intent, exportZip ? SAVE_REPORT_REQUEST : SAVE_XLS_REQUEST);
         });
         secondary("Назад", this::chooseExportScope);
     }
 
     @Override protected void onSaveInstanceState(Bundle state) {
+        if ("wizard".equals(screen) && (field != null || setsField != null))
+            captureWizardStep();
+        if ("live_log".equals(screen) && liveWeightField != null) captureLiveAnswer(false);
         if (exportFromField != null && "export_range".equals(screen)) {
             exportFrom = exportFromField.getText().toString().trim();
             exportTo = exportToField.getText().toString().trim();
@@ -462,13 +535,76 @@ public final class MainActivity extends Activity {
         state.putString("export_athlete", exportAthlete);
         state.putString("export_from", exportFrom);
         state.putString("export_to", exportTo);
+        state.putBoolean("export_zip", exportZip);
+        state.putString("screen", screen);
+        state.putStringArray("draft", draft);
+        state.putString("draft_video_uri", draftVideoUri);
+        state.putString("entry_athlete", entryAthlete);
+        state.putInt("step", step);
+        state.putString("program_code", programCode);
+        state.putInt("week", week);
+        state.putInt("current_exercise", currentExercise);
+        state.putBooleanArray("completed", completed);
+        state.putIntegerArrayList("live_indices", new ArrayList<>(liveIndices));
+        state.putStringArrayList("live_athletes", new ArrayList<>(liveAthletes));
+        state.putSerializable("live_answers", liveAnswers);
+        state.putStringArray("live_video_uris", liveVideoUris);
+        state.putStringArray("live_sets_reps", liveSetsReps);
+        state.putInt("live_journal_index", liveJournalIndex);
+        state.putString("live_journal_date", liveJournalDate);
         super.onSaveInstanceState(state);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != SAVE_XLS_REQUEST || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (requestCode == PICK_VIDEO_REQUEST) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                try {
+                    getContentResolver().takePersistableUriPermission(data.getData(), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    if ("live_log".equals(screen)) {
+                        liveVideoUris[liveJournalIndex] = data.getData().toString();
+                        liveJournal();
+                    } else if ("wizard".equals(screen)) {
+                        captureWizardStep();
+                        draftVideoUri = data.getData().toString();
+                        wizard();
+                    }
+                } catch (SecurityException error) {
+                    Toast.makeText(this, "Не удалось сохранить доступ к видео", Toast.LENGTH_LONG).show();
+                }
+            }
+            return;
+        }
+        if ((requestCode != SAVE_XLS_REQUEST && requestCode != SAVE_REPORT_REQUEST)
+                || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri destination = data.getData();
+        if (requestCode == SAVE_REPORT_REQUEST) {
+            List<WorkoutStore.Entry> rows = store.exportRows(exportAthlete, exportFrom, exportTo);
+            begin("Создаём ZIP-отчёт", "exporting");
+            paragraph("Копируем видео. Дождитесь сообщения о сохранении и не закрывайте приложение.");
+            new Thread(() -> {
+                try (OutputStream output = getContentResolver().openOutputStream(destination, "w")) {
+                    if (output == null) throw new IOException("Не удалось открыть выбранный файл");
+                    TrainerReportExporter.write(this, output, rows);
+                    runOnUiThread(() -> {
+                        begin("ZIP-отчёт сохранён", "report_ready");
+                        paragraph("Отправьте архив тренеру целиком. После распаковки он сможет открыть index.html и посмотреть видео.");
+                        button("Поделиться ZIP", () -> shareReport(destination));
+                        secondary("На главную", this::home);
+                    });
+                } catch (Exception error) {
+                    try { DocumentsContract.deleteDocument(getContentResolver(), destination); }
+                    catch (Exception ignored) { }
+                    runOnUiThread(() -> {
+                        begin("Ошибка создания отчёта", "export_error");
+                        paragraph("Не удалось сохранить отчёт: " + error.getMessage());
+                        secondary("Повторить", this::chooseExportScope);
+                        secondary("На главную", this::home);
+                    });
+                }
+            }).start();
+            return;
+        }
         File temporary = null;
         try {
             List<WorkoutStore.Entry> rows = store.exportRows(exportAthlete, exportFrom, exportTo);
@@ -487,6 +623,15 @@ public final class MainActivity extends Activity {
         } finally {
             if (temporary != null) temporary.delete();
         }
+    }
+
+    private void shareReport(Uri destination) {
+        Intent intent = new Intent(Intent.ACTION_SEND);
+        intent.setType("application/zip");
+        intent.putExtra(Intent.EXTRA_STREAM, destination);
+        intent.setClipData(ClipData.newUri(getContentResolver(), "Отчёт о тренировках", destination));
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        startActivity(Intent.createChooser(intent, "Поделиться отчётом"));
     }
 
     private void startLive() {
@@ -636,7 +781,12 @@ public final class MainActivity extends Activity {
         liveIndices = new ArrayList<>();
         for (int i = 0; i < completed.length; i++) if (completed[i]) liveIndices.add(i);
         liveAnswers = new String[liveIndices.size() * liveAthletes.size()][3];
+        liveVideoUris = new String[liveAnswers.length];
+        liveSetsReps = new String[liveAnswers.length];
         for (String[] answer : liveAnswers) for (int i = 0; i < 3; i++) answer[i] = "";
+        for (int i = 0; i < liveVideoUris.length; i++) liveVideoUris[i] = "";
+        for (int i = 0; i < liveSetsReps.length; i++)
+            liveSetsReps[i] = program.exercises.get(liveIndices.get(i % liveIndices.size())).weeks[week - 1];
         liveJournalDate = LocalDate.now().toString();
         liveJournalIndex = 0;
         liveJournal();
@@ -655,6 +805,8 @@ public final class MainActivity extends Activity {
         page.addView(text(exercise.name, 22, INK, true));
         gap(8);
         paragraph("План недели " + week + ": " + exercise.weeks[week - 1]);
+        page.addView(text("Фактически выполнено · подходы × повторы", 17, INK, true));
+        liveSetsRepsField = input("Например, 3×8/сторона", liveSetsReps[liveJournalIndex], InputType.TYPE_CLASS_TEXT);
         page.addView(text("Вес", 17, INK, true));
         liveOwnWeight = "Свой вес".equals(answer[0]);
         String weight = answer[0].endsWith(" кг") ? answer[0].substring(0, answer[0].length() - 3) : "";
@@ -673,6 +825,7 @@ public final class MainActivity extends Activity {
         liveRpeField = input("0–10", answer[1], InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         page.addView(text("Боль / дискомфорт", 17, INK, true));
         livePainField = input("0–10", answer[2], InputType.TYPE_CLASS_NUMBER);
+        videoPickerControls(liveVideoUris[liveJournalIndex]);
         String nextLabel = liveJournalIndex == liveAnswers.length - 1 ? "Сохранить журнал" :
                 liveJournalIndex % exercisesPerAthlete == exercisesPerAthlete - 1
                         ? "Следующий участник: " + liveAthletes.get(participant + 1) : "Следующее упражнение";
@@ -693,7 +846,9 @@ public final class MainActivity extends Activity {
         String weight = liveOwnWeight ? "Свой вес" : liveWeightField.getText().toString().trim();
         String rpe = liveRpeField.getText().toString().trim();
         String pain = livePainField.getText().toString().trim();
+        String setsReps = liveSetsRepsField.getText().toString().trim();
         if (validate) {
+            if (setsReps.isEmpty()) { liveSetsRepsField.setError("Укажите фактические подходы и повторы"); return false; }
             if (!liveOwnWeight && !validWeight(weight)) { liveWeightField.setError("Введите кг или выберите «Свой вес»"); return false; }
             if (!validRating(rpe, false)) { liveRpeField.setError("Число от 0 до 10"); return false; }
             if (!validRating(pain, true)) { livePainField.setError("Целое число от 0 до 10"); return false; }
@@ -701,6 +856,7 @@ public final class MainActivity extends Activity {
         liveAnswers[liveJournalIndex][0] = liveOwnWeight || weight.isEmpty() ? weight : weight.replace(',', '.') + " кг";
         liveAnswers[liveJournalIndex][1] = rpe;
         liveAnswers[liveJournalIndex][2] = pain;
+        liveSetsReps[liveJournalIndex] = setsReps;
         return true;
     }
 
@@ -720,7 +876,8 @@ public final class MainActivity extends Activity {
             ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(i % exercisesPerAthlete));
             String[] answer = liveAnswers[i];
             records.add(new WorkoutStore.NewEntry(athlete,
-                    new String[]{liveJournalDate, programCode, exercise.name, answer[0], exercise.weeks[week - 1], answer[1], answer[2], ""}));
+                    new String[]{liveJournalDate, programCode, exercise.name, answer[0], liveSetsReps[i], answer[1], answer[2], ""},
+                    liveVideoUris[i]));
         }
         try {
             store.addAll(records);

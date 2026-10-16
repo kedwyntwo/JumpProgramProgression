@@ -15,30 +15,38 @@ final class WorkoutStore extends SQLiteOpenHelper {
         final long id;
         final String athlete;
         final String[] values;
+        final String videoUri;
 
-        Entry(long id, String athlete, String[] values) {
+        Entry(long id, String athlete, String[] values, String videoUri) {
             this.id = id;
             this.athlete = athlete;
             this.values = values;
+            this.videoUri = videoUri;
         }
     }
 
     static final class NewEntry {
         final String athlete;
         final String[] values;
+        final String videoUri;
 
         NewEntry(String athlete, String[] values) {
+            this(athlete, values, "");
+        }
+
+        NewEntry(String athlete, String[] values, String videoUri) {
             this.athlete = athlete;
             this.values = values;
+            this.videoUri = videoUri;
         }
     }
 
     WorkoutStore(Context context) {
-        super(context, "workouts.db", null, 3);
+        super(context, "workouts.db", null, 4);
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
-        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, workout TEXT NOT NULL, exercise TEXT NOT NULL, weight TEXT, sets_reps TEXT, rpe TEXT, pain TEXT, comment TEXT, athlete TEXT NOT NULL DEFAULT '')");
+        db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, workout TEXT NOT NULL, exercise TEXT NOT NULL, weight TEXT, sets_reps TEXT, rpe TEXT, pain TEXT, comment TEXT, athlete TEXT NOT NULL DEFAULT '', video_uri TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX entries_by_date ON entries(date DESC, id)");
         db.execSQL("CREATE INDEX entries_by_athlete_date ON entries(athlete, date DESC, id)");
         db.execSQL("CREATE TABLE profiles (name TEXT PRIMARY KEY COLLATE NOCASE)");
@@ -53,6 +61,7 @@ final class WorkoutStore extends SQLiteOpenHelper {
             db.execSQL("CREATE TABLE profiles (name TEXT PRIMARY KEY COLLATE NOCASE)");
             db.execSQL("INSERT OR IGNORE INTO profiles(name) SELECT DISTINCT athlete FROM entries WHERE athlete != ''");
         }
+        if (oldVersion < 4) db.execSQL("ALTER TABLE entries ADD COLUMN video_uri TEXT NOT NULL DEFAULT ''");
     }
 
     List<String> profiles() {
@@ -98,9 +107,13 @@ final class WorkoutStore extends SQLiteOpenHelper {
     }
 
     void add(String athlete, String[] values) {
+        add(athlete, values, "");
+    }
+
+    void add(String athlete, String[] values, String videoUri) {
         SQLiteDatabase db = getWritableDatabase();
         requireAthlete(db, athlete);
-        insert(db, new NewEntry(athlete, values));
+        insert(db, new NewEntry(athlete, values, videoUri));
     }
 
     void addAll(List<NewEntry> entries) {
@@ -120,6 +133,7 @@ final class WorkoutStore extends SQLiteOpenHelper {
     private void insert(SQLiteDatabase db, NewEntry entry) {
         ContentValues row = new ContentValues();
         row.put("athlete", entry.athlete);
+        row.put("video_uri", entry.videoUri);
         for (int i = 0; i < FIELDS.length; i++) row.put(FIELDS[i], entry.values[i].trim());
         db.insertOrThrow("entries", null, row);
     }
@@ -161,15 +175,17 @@ final class WorkoutStore extends SQLiteOpenHelper {
 
     private List<Entry> query(String selection, String[] args, String order) {
         List<Entry> result = new ArrayList<>();
-        String[] columns = new String[FIELDS.length + 2];
+        String[] columns = new String[FIELDS.length + 3];
         columns[0] = "id";
         columns[1] = "athlete";
         System.arraycopy(FIELDS, 0, columns, 2, FIELDS.length);
+        columns[columns.length - 1] = "video_uri";
         try (Cursor cursor = getReadableDatabase().query("entries", columns, selection, args, null, null, order)) {
             while (cursor.moveToNext()) {
                 String[] row = new String[FIELDS.length];
                 for (int i = 0; i < row.length; i++) row[i] = cursor.getString(i + 2);
-                result.add(new Entry(cursor.getLong(0), cursor.getString(1), row));
+                result.add(new Entry(cursor.getLong(0), cursor.getString(1), row,
+                        cursor.getString(columns.length - 1)));
             }
         }
         return result;

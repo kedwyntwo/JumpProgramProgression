@@ -142,6 +142,10 @@ public class MainActivityTest {
         typeAndNext(activity, "7");
         typeAndNext(activity, "0");
         all(root(activity), EditText.class).get(0).setText("Техника чистая");
+        click(activity, "Прикрепить видео исполнения");
+        ShadowActivity.IntentForResult videoPicker = Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, videoPicker.intent.getAction());
+        assertEquals("video/*", videoPicker.intent.getType());
         click(activity, "Сохранить запись");
         click(activity, "Посмотреть записи за дату");
         assertNotNull(find(root(activity), TextView.class, "Вес: Свой вес"));
@@ -186,24 +190,24 @@ public class MainActivityTest {
         assertNotNull(find(root(activity), TextView.class, "План недели 3: 3×8/сторона"));
         click(activity, "Свой вес");
         List<EditText> first = all(root(activity), EditText.class);
-        first.get(1).setText("7");
-        first.get(2).setText("0");
+        first.get(2).setText("7");
+        first.get(3).setText("0");
         click(activity, "Следующее упражнение");
         List<EditText> second = all(root(activity), EditText.class);
-        second.get(0).setText("8");
         second.get(1).setText("8");
-        second.get(2).setText("1");
+        second.get(2).setText("8");
+        second.get(3).setText("1");
         click(activity, "Следующий участник: Борис");
         assertNotNull(find(root(activity), TextView.class, "Борис"));
         click(activity, "Свой вес");
         List<EditText> igorFirst = all(root(activity), EditText.class);
-        igorFirst.get(1).setText("6");
-        igorFirst.get(2).setText("0");
+        igorFirst.get(2).setText("6");
+        igorFirst.get(3).setText("0");
         click(activity, "Следующее упражнение");
         List<EditText> igorSecond = all(root(activity), EditText.class);
-        igorSecond.get(0).setText("10");
-        igorSecond.get(1).setText("9");
-        igorSecond.get(2).setText("2");
+        igorSecond.get(1).setText("10");
+        igorSecond.get(2).setText("9");
+        igorSecond.get(3).setText("2");
         click(activity, "Сохранить журнал");
         String today = LocalDate.now().toString();
         WorkoutStore store = new WorkoutStore(activity);
@@ -260,17 +264,22 @@ public class MainActivityTest {
         all(root(activity), CheckBox.class).get(0).setChecked(true);
         click(activity, "Заполнить журнал");
         assertNotNull(find(root(activity), TextView.class, programB.exercises.get(2).name));
+        click(activity, "Прикрепить видео исполнения");
+        ShadowActivity.IntentForResult livePicker = Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, livePicker.intent.getAction());
+        assertEquals("video/*", livePicker.intent.getType());
         click(activity, "Свой вес");
         List<EditText> answers = all(root(activity), EditText.class);
-        answers.get(1).setText("7");
-        answers.get(2).setText("0");
+        answers.get(0).setText("2×12");
+        answers.get(2).setText("7");
+        answers.get(3).setText("0");
         click(activity, "Сохранить журнал");
         String today = LocalDate.now().toString();
         List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate("Мария", today);
         assertEquals(1, saved.size());
         assertEquals("B", saved.get(0).values[1]);
         assertEquals(programB.exercises.get(2).name, saved.get(0).values[2]);
-        assertEquals(programB.exercises.get(2).weeks[0], saved.get(0).values[4]);
+        assertEquals("2×12", saved.get(0).values[4]);
         click(activity, "На главную");
         click(activity, "Профили");
         click(activity, "Удалить профиль · Мария");
@@ -300,6 +309,31 @@ public class MainActivityTest {
         assertEquals(Intent.ACTION_CREATE_DOCUMENT, launched.intent.getAction());
         assertEquals("application/vnd.ms-excel", launched.intent.getType());
         assertTrue(launched.intent.getStringExtra(Intent.EXTRA_TITLE).endsWith(".xls"));
+        click(activity, "Назад");
+        click(activity, "На главную");
+        click(activity, "Отчёт для тренера (ZIP)");
+        click(activity, "Анна");
+        click(activity, "Выбрать место сохранения");
+        ShadowActivity.IntentForResult zip = Shadows.shadowOf(activity).getNextStartedActivityForResult();
+        assertEquals(Intent.ACTION_CREATE_DOCUMENT, zip.intent.getAction());
+        assertEquals("application/zip", zip.intent.getType());
+        assertTrue(zip.intent.getStringExtra(Intent.EXTRA_TITLE).endsWith(".zip"));
+    }
+
+    @Test public void journalOpensAttachedAttemptVideo() {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        activity.deleteDatabase("workouts.db");
+        WorkoutStore store = new WorkoutStore(activity);
+        assertTrue(store.createProfile("Анна"));
+        store.add("Анна", new String[]{"2026-10-16", "B", "Сгибание голени", "20 кг", "3×10", "7", "0", ""},
+                "content://trainer.example/attempt/1");
+        click(activity, "Журнал тренировок");
+        click(activity, "Анна");
+        click(activity, "2026-10-16");
+        click(activity, "Смотреть видео исполнения");
+        Intent player = Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals(VideoActivity.class.getName(), player.getComponent().getClassName());
+        assertEquals("content://trainer.example/attempt/1", player.getStringExtra(VideoActivity.EXTRA_VIDEO_URI));
     }
 
     private Button findByDescription(View view, String description) {

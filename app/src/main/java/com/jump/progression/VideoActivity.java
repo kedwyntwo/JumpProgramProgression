@@ -15,6 +15,7 @@ public final class VideoActivity extends Activity {
     static final String EXTRA_EXERCISE_INDEX = "exercise_index";
     static final String EXTRA_EXERCISE_NAME = "exercise_name";
     static final String EXTRA_PROGRAM = "program";
+    static final String EXTRA_VIDEO_URI = "video_uri";
     private static final int[] VIDEOS = {
             R.raw.exercise_01, R.raw.exercise_02, R.raw.exercise_03, R.raw.exercise_04,
             R.raw.exercise_05, R.raw.exercise_06, R.raw.exercise_07, R.raw.exercise_08,
@@ -41,7 +42,8 @@ public final class VideoActivity extends Activity {
         super.onCreate(savedInstanceState);
         int index = getIntent().getIntExtra(EXTRA_EXERCISE_INDEX, -1);
         int video = videoForIndex(getIntent().getStringExtra(EXTRA_PROGRAM), index);
-        if (video == 0) {
+        String ownVideo = getIntent().getStringExtra(EXTRA_VIDEO_URI);
+        if (video == 0 && (ownVideo == null || ownVideo.isEmpty())) {
             finish();
             return;
         }
@@ -63,7 +65,7 @@ public final class VideoActivity extends Activity {
                 Gravity.CENTER));
 
         Button back = new Button(this);
-        back.setText("← К тренировке");
+        back.setText(ownVideo == null ? "← К тренировке" : "← К журналу");
         back.setTextColor(Color.WHITE);
         back.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0x99000000));
         back.setOnClickListener(view -> finish());
@@ -72,7 +74,9 @@ public final class VideoActivity extends Activity {
                 Gravity.TOP | Gravity.START));
         setContentView(page);
 
-        videoView.setVideoURI(Uri.parse("android.resource://" + getPackageName() + "/" + video));
+        videoView.setVideoURI(ownVideo == null
+                ? Uri.parse("android.resource://" + getPackageName() + "/" + video)
+                : Uri.parse(ownVideo));
         videoView.setOnPreparedListener(player -> videoView.start());
         videoView.setOnErrorListener((player, what, extra) -> {
             Toast.makeText(this, "Не удалось воспроизвести видео", Toast.LENGTH_LONG).show();

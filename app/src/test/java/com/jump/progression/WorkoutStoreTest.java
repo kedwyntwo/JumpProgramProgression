@@ -54,6 +54,7 @@ public class WorkoutStoreTest {
         old.close();
         WorkoutStore store = new WorkoutStore(context);
         assertEquals(java.util.Collections.singletonList("Кирилл"), store.profiles());
+        assertEquals("", store.onDate("Кирилл", "2026-01-03").get(0).videoUri);
         assertFalse(store.createProfile("кирилл"));
         assertTrue(store.deleteProfile("Кирилл"));
         assertTrue(store.profiles().isEmpty());
@@ -67,7 +68,8 @@ public class WorkoutStoreTest {
         assertTrue(store.createProfile("Анна"));
         assertTrue(store.createProfile("Борис"));
         store.add("Анна", row("2026-01-01", "До периода", "5 кг"));
-        store.add("Анна", row("2026-01-02", "Мёртвый жук", "Свой вес"));
+        store.add("Анна", row("2026-01-02", "Мёртвый жук", "Свой вес"), "content://videos/attempt-1");
+        assertEquals("content://videos/attempt-1", store.onDate("Анна", "2026-01-02").get(0).videoUri);
         store.add("Борис", row("2026-01-02", "Ротация в блоке", "8 кг"));
         store.add("Борис", row("2026-01-03", "После периода", "9 кг"));
 
