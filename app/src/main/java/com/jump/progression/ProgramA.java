@@ -38,7 +38,12 @@ final class ProgramA {
     final List<Exercise> exercises = new ArrayList<>();
 
     ProgramA(Context context) throws IOException, JSONException {
-        try (InputStream stream = context.getAssets().open("program_a.json")) {
+        this(context, "A");
+    }
+
+    ProgramA(Context context, String code) throws IOException, JSONException {
+        if (!"A".equals(code) && !"B".equals(code)) throw new IllegalArgumentException("Unknown program");
+        try (InputStream stream = context.getAssets().open("program_" + code.toLowerCase(java.util.Locale.ROOT) + ".json")) {
             byte[] bytes = new byte[stream.available()];
             int read = 0;
             while (read < bytes.length) {

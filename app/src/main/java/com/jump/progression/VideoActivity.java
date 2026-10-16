@@ -14,22 +14,33 @@ import android.widget.VideoView;
 public final class VideoActivity extends Activity {
     static final String EXTRA_EXERCISE_INDEX = "exercise_index";
     static final String EXTRA_EXERCISE_NAME = "exercise_name";
+    static final String EXTRA_PROGRAM = "program";
     private static final int[] VIDEOS = {
             R.raw.exercise_01, R.raw.exercise_02, R.raw.exercise_03, R.raw.exercise_04,
             R.raw.exercise_05, R.raw.exercise_06, R.raw.exercise_07, R.raw.exercise_08,
             R.raw.exercise_09, R.raw.exercise_10
     };
+    private static final int[] VIDEOS_B = {
+            R.raw.exercise_01, R.raw.exercise_02, R.raw.program_b_03, R.raw.program_b_04,
+            R.raw.program_b_05, R.raw.program_b_06, R.raw.program_b_07, R.raw.program_b_08,
+            R.raw.program_b_09, R.raw.exercise_10
+    };
 
     private VideoView videoView;
 
     static int videoForIndex(int index) {
-        return index >= 0 && index < VIDEOS.length ? VIDEOS[index] : 0;
+        return videoForIndex("A", index);
+    }
+
+    static int videoForIndex(String program, int index) {
+        int[] videos = "B".equals(program) ? VIDEOS_B : VIDEOS;
+        return index >= 0 && index < videos.length ? videos[index] : 0;
     }
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         int index = getIntent().getIntExtra(EXTRA_EXERCISE_INDEX, -1);
-        int video = videoForIndex(index);
+        int video = videoForIndex(getIntent().getStringExtra(EXTRA_PROGRAM), index);
         if (video == 0) {
             finish();
             return;

@@ -9,8 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 final class WorkoutStore extends SQLiteOpenHelper {
-    static final String KIRILL = "Кирилл";
-    static final String IGOR = "Игорь";
     static final String[] FIELDS = {"date", "workout", "exercise", "weight", "sets_reps", "rpe", "pain", "comment"};
 
     static final class Entry {
@@ -36,13 +34,14 @@ final class WorkoutStore extends SQLiteOpenHelper {
     }
 
     WorkoutStore(Context context) {
-        super(context, "workouts.db", null, 2);
+        super(context, "workouts.db", null, 3);
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, workout TEXT NOT NULL, exercise TEXT NOT NULL, weight TEXT, sets_reps TEXT, rpe TEXT, pain TEXT, comment TEXT, athlete TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX entries_by_date ON entries(date DESC, id)");
         db.execSQL("CREATE INDEX entries_by_athlete_date ON entries(athlete, date DESC, id)");
+        db.execSQL("CREATE TABLE profiles (name TEXT PRIMARY KEY COLLATE NOCASE)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -50,16 +49,58 @@ final class WorkoutStore extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE entries ADD COLUMN athlete TEXT NOT NULL DEFAULT ''");
             db.execSQL("CREATE INDEX entries_by_athlete_date ON entries(athlete, date DESC, id)");
         }
+        if (oldVersion < 3) {
+            db.execSQL("CREATE TABLE profiles (name TEXT PRIMARY KEY COLLATE NOCASE)");
+            db.execSQL("INSERT OR IGNORE INTO profiles(name) SELECT DISTINCT athlete FROM entries WHERE athlete != ''");
+        }
     }
 
-    private static void requireAthlete(String athlete) {
-        if (!KIRILL.equals(athlete) && !IGOR.equals(athlete))
-            throw new IllegalArgumentException("Unknown athlete");
+    List<String> profiles() {
+        List<String> names = new ArrayList<>();
+        try (Cursor cursor = getReadableDatabase().rawQuery("SELECT name FROM profiles ORDER BY name COLLATE NOCASE", null)) {
+            while (cursor.moveToNext()) names.add(cursor.getString(0));
+        }
+        return names;
+    }
+
+    boolean createProfile(String name) {
+        String normalized = name.trim();
+        if (normalized.isEmpty() || normalized.length() > 50) return false;
+        for (String existing : profiles()) if (existing.equalsIgnoreCase(normalized)) return false;
+        ContentValues values = new ContentValues();
+        values.put("name", normalized);
+        return getWritableDatabase().insertWithOnConflict("profiles", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1;
+    }
+
+    boolean deleteProfile(String name) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            if (!hasProfile(db, name)) return false;
+            ContentValues orphan = new ContentValues();
+            orphan.put("athlete", "");
+            db.update("entries", orphan, "athlete = ?", new String[]{name});
+            db.delete("profiles", "name = ?", new String[]{name});
+            db.setTransactionSuccessful();
+            return true;
+        } finally { db.endTransaction(); }
+    }
+
+    private static boolean hasProfile(SQLiteDatabase db, String name) {
+        if (name == null || name.isEmpty()) return false;
+        try (Cursor cursor = db.rawQuery("SELECT 1 FROM profiles WHERE name = ? LIMIT 1", new String[]{name})) {
+            return cursor.moveToFirst();
+        }
+    }
+
+    private static void requireAthlete(SQLiteDatabase db, String athlete) {
+        if (!hasProfile(db, athlete)) throw new IllegalArgumentException("Профиль не найден");
     }
 
     void add(String athlete, String[] values) {
-        requireAthlete(athlete);
-        insert(getWritableDatabase(), new NewEntry(athlete, values));
+        SQLiteDatabase db = getWritableDatabase();
+        requireAthlete(db, athlete);
+        insert(db, new NewEntry(athlete, values));
     }
 
     void addAll(List<NewEntry> entries) {
@@ -67,7 +108,7 @@ final class WorkoutStore extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             for (NewEntry entry : entries) {
-                requireAthlete(entry.athlete);
+                requireAthlete(db, entry.athlete);
                 insert(db, entry);
             }
             db.setTransactionSuccessful();
@@ -88,7 +129,7 @@ final class WorkoutStore extends SQLiteOpenHelper {
     }
 
     boolean assign(long id, String athlete) {
-        requireAthlete(athlete);
+        requireAthlete(getWritableDatabase(), athlete);
         ContentValues values = new ContentValues();
         values.put("athlete", athlete);
         return getWritableDatabase().update("entries", values, "id = ? AND athlete = ''", new String[]{Long.toString(id)}) == 1;

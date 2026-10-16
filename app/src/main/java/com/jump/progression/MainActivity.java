@@ -19,6 +19,7 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -44,7 +45,9 @@ public final class MainActivity extends Activity {
     private static final int GREEN = Color.rgb(20, 125, 108);
     private static final int MUTED = Color.rgb(91, 110, 108);
     private WorkoutStore store;
-    private ProgramA program;
+    private ProgramA programA, programB, program;
+    private String programCode = "A";
+    private final List<String> liveAthletes = new ArrayList<>();
     private LinearLayout page;
     private String screen = "home";
     private String[] draft = new String[8];
@@ -77,7 +80,9 @@ public final class MainActivity extends Activity {
         }
         store = new WorkoutStore(this);
         try {
-            program = new ProgramA(this);
+            programA = new ProgramA(this, "A");
+            programB = new ProgramA(this, "B");
+            program = programA;
         } catch (IOException | JSONException error) {
             new android.app.AlertDialog.Builder(this).setTitle("Ошибка программы")
                     .setMessage("Не удалось загрузить упражнения: " + error.getMessage())
@@ -152,7 +157,8 @@ public final class MainActivity extends Activity {
     private void home() {
         stopTimer();
         begin("Прогресс тренировок", "home");
-        paragraph("Программа A и журнал тренировок всегда под рукой.");
+        paragraph("Программы А и Б и журнал тренировок всегда под рукой.");
+        button("Профили", this::manageProfiles);
         button("Создать запись тренировки", this::chooseAthleteForEntry);
         button("Журнал тренировок", this::chooseAthleteForJournal);
         button("Live-тренировка", this::startLive);
@@ -161,10 +167,35 @@ public final class MainActivity extends Activity {
         paragraph("Записи хранятся только на этом устройстве.");
     }
 
+    private void manageProfiles() {
+        begin("Профили", "profiles");
+        paragraph("Создайте профиль для каждого участника. Журнал хранится отдельно для каждого профиля.");
+        EditText name = input("Имя пользователя", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        button("Создать профиль", () -> {
+            if (!store.createProfile(name.getText().toString())) {
+                name.setError("Введите уникальное имя до 50 символов");
+                return;
+            }
+            manageProfiles();
+        });
+        for (String athlete : store.profiles()) {
+            page.addView(text(athlete, 19, INK, true));
+            secondary("Удалить профиль · " + athlete, () -> new AlertDialog.Builder(this)
+                    .setTitle("Удалить профиль «" + athlete + "»?")
+                    .setMessage("Записи сохранятся в разделе «Записи без профиля». Их можно будет назначить другому профилю.")
+                    .setNegativeButton("Отмена", null)
+                    .setPositiveButton("Удалить", (dialog, which) -> {
+                        store.deleteProfile(athlete);
+                        manageProfiles();
+                    }).show());
+        }
+        secondary("На главную", this::home);
+    }
+
     private void chooseAthleteForEntry() {
         begin("Для кого запись?", "choose_entry_athlete");
-        button(WorkoutStore.KIRILL, () -> newEntry(null, WorkoutStore.KIRILL));
-        button(WorkoutStore.IGOR, () -> newEntry(null, WorkoutStore.IGOR));
+        for (String athlete : store.profiles()) button(athlete, () -> newEntry(null, athlete));
+        secondary("Создать профиль", this::manageProfiles);
         secondary("На главную", this::home);
     }
 
@@ -203,9 +234,17 @@ public final class MainActivity extends Activity {
         }
         gap(16);
         if (step == 0) secondary("Выбрать дату", this::pickDate);
+        if (step == 1) {
+            secondary("Программа А", () -> field.setText("A"));
+            secondary("Программа Б", () -> field.setText("B"));
+        }
         if (step == 2) {
-            paragraph("Упражнение можно выбрать из программы A или ввести своё.");
-            for (ProgramA.Exercise exercise : program.exercises) secondary(exercise.name, () -> field.setText(exercise.name));
+            paragraph("Упражнение можно выбрать из программы А или Б либо ввести своё.");
+            for (ProgramA.Exercise exercise : programA.exercises) secondary(exercise.name, () -> field.setText(exercise.name));
+            for (ProgramA.Exercise exercise : programB.exercises) {
+                if (programA.exercises.stream().noneMatch(item -> item.name.equals(exercise.name)))
+                    secondary(exercise.name, () -> field.setText(exercise.name));
+            }
         }
         button(step == LABELS.length - 1 ? "Сохранить запись" : "Далее", () -> {
             captureWizardStep();
@@ -310,15 +349,15 @@ public final class MainActivity extends Activity {
 
     private void chooseAthleteForJournal() {
         begin("Чей журнал открыть?", "choose_journal_athlete");
-        button(WorkoutStore.KIRILL, () -> dates(WorkoutStore.KIRILL));
-        button(WorkoutStore.IGOR, () -> dates(WorkoutStore.IGOR));
-        if (store.hasUnassigned()) secondary("Старые записи без пользователя", () -> dates(""));
+        for (String athlete : store.profiles()) button(athlete, () -> dates(athlete));
+        if (store.hasUnassigned()) secondary("Записи без профиля", () -> dates(""));
+        secondary("Создать профиль", this::manageProfiles);
         secondary("На главную", this::home);
     }
 
     private void dates(String athlete) {
         journalAthlete = athlete;
-        begin(athlete.isEmpty() ? "Старые записи" : "Журнал · " + athlete, "dates");
+        begin(athlete.isEmpty() ? "Записи без профиля" : "Журнал · " + athlete, "dates");
         List<String> dates = store.dates(athlete);
         if (dates.isEmpty()) paragraph("Записей пока нет. Добавьте первое упражнение.");
         for (String date : dates) button(date, () -> entries(athlete, date));
@@ -328,7 +367,7 @@ public final class MainActivity extends Activity {
 
     private void entries(String athlete, String date) {
         journalAthlete = athlete;
-        begin((athlete.isEmpty() ? "Старые записи" : athlete) + " · " + date, "entries");
+        begin((athlete.isEmpty() ? "Записи без профиля" : athlete) + " · " + date, "entries");
         List<WorkoutStore.Entry> rows = store.onDate(athlete, date);
         for (WorkoutStore.Entry entry : rows) {
             String[] row = entry.values;
@@ -350,8 +389,8 @@ public final class MainActivity extends Activity {
                         } else Toast.makeText(this, "Запись не найдена", Toast.LENGTH_SHORT).show();
                     }).show());
             if (athlete.isEmpty()) {
-                secondary("Назначить Кириллу", () -> assignLegacy(entry, WorkoutStore.KIRILL, date));
-                secondary("Назначить Игорю", () -> assignLegacy(entry, WorkoutStore.IGOR, date));
+                for (String profile : store.profiles())
+                    secondary("Назначить: " + profile, () -> assignLegacy(entry, profile, date));
             }
             gap(20);
         }
@@ -373,8 +412,7 @@ public final class MainActivity extends Activity {
     private void chooseExportScope() {
         begin("Выгрузить записи в XLS", "export_scope");
         paragraph("Сначала выберите, чьи записи включить в файл.");
-        button("Кирилл", () -> exportRange(WorkoutStore.KIRILL));
-        button("Игорь", () -> exportRange(WorkoutStore.IGOR));
+        for (String athlete : store.profiles()) button(athlete, () -> exportRange(athlete));
         button("Все записи", () -> exportRange(null));
         secondary("На главную", this::home);
     }
@@ -406,7 +444,7 @@ public final class MainActivity extends Activity {
             }
             exportFrom = from;
             exportTo = to;
-            String scope = athlete == null ? "all" : WorkoutStore.KIRILL.equals(athlete) ? "kirill" : "igor";
+            String scope = athlete == null ? "all" : "profile";
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("application/vnd.ms-excel");
@@ -452,6 +490,15 @@ public final class MainActivity extends Activity {
     }
 
     private void startLive() {
+        begin("Выберите программу", "choose_program");
+        button("Программа А", () -> beginLive("A"));
+        button("Программа Б", () -> beginLive("B"));
+        secondary("На главную", this::home);
+    }
+
+    private void beginLive(String code) {
+        programCode = code;
+        program = "B".equals(code) ? programB : programA;
         week = 1;
         currentExercise = 0;
         completed = new boolean[program.exercises.size()];
@@ -481,7 +528,7 @@ public final class MainActivity extends Activity {
 
     private void live() {
         stopTimer();
-        begin("Live-тренировка · A", "live");
+        begin("Live-тренировка · " + programCode, "live");
         paragraph("Выберите неделю. Упражнения идут в порядке таблицы, после 5–8 минут разминки и мобилизации.");
         LinearLayout weeks = new LinearLayout(this);
         weeks.setOrientation(LinearLayout.HORIZONTAL);
@@ -508,6 +555,7 @@ public final class MainActivity extends Activity {
         paragraph("Отдых: " + exercise.rest + "\n\n" + exercise.focus);
         secondary("Посмотреть видео упражнения", () -> {
             Intent intent = new Intent(this, VideoActivity.class);
+            intent.putExtra(VideoActivity.EXTRA_PROGRAM, programCode);
             intent.putExtra(VideoActivity.EXTRA_EXERCISE_INDEX, currentExercise);
             intent.putExtra(VideoActivity.EXTRA_EXERCISE_NAME, exercise.name);
             startActivity(intent);
@@ -531,7 +579,7 @@ public final class MainActivity extends Activity {
         });
         if (currentExercise > 0) secondary("Предыдущее упражнение", () -> { currentExercise--; live(); });
         if (currentExercise < program.exercises.size() - 1) button("Следующее упражнение", () -> { currentExercise++; live(); });
-        else paragraph("Это последнее упражнение программы A.");
+        else paragraph("Это последнее упражнение программы " + programCode + ".");
         button("Завершить тренировку", this::offerLiveJournal);
         gap(10);
         page.addView(text("Порядок упражнений", 19, INK, true));
@@ -553,16 +601,41 @@ public final class MainActivity extends Activity {
         }
         stopTimer();
         new AlertDialog.Builder(this).setTitle("Тренировка завершена")
-                .setMessage("Выполнено упражнений: " + count + ". Заполнить журнал сначала для Кирилла, затем для Игоря?")
-                .setPositiveButton("Заполнить журналы", (dialog, which) -> startLiveJournal())
+                .setMessage("Выполнено упражнений: " + count + ". Заполнить журнал для участников?")
+                .setPositiveButton("Выбрать участников", (dialog, which) -> chooseLiveParticipants())
                 .setNegativeButton("Продолжить", null)
                 .setNeutralButton("Без записи", (dialog, which) -> home()).show();
+    }
+
+    private void chooseLiveParticipants() {
+        begin("Участники тренировки", "live_participants");
+        List<String> profiles = store.profiles();
+        if (profiles.isEmpty()) paragraph("Сначала создайте профиль, чтобы сохранить тренировку.");
+        List<CheckBox> choices = new ArrayList<>();
+        for (String name : profiles) {
+            CheckBox choice = new CheckBox(this);
+            choice.setText(name);
+            choice.setTextSize(19);
+            page.addView(choice);
+            choices.add(choice);
+        }
+        if (!profiles.isEmpty()) button("Заполнить журнал", () -> {
+            liveAthletes.clear();
+            for (int i = 0; i < profiles.size(); i++) if (choices.get(i).isChecked()) liveAthletes.add(profiles.get(i));
+            if (liveAthletes.isEmpty()) {
+                Toast.makeText(this, "Выберите хотя бы одного участника", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            startLiveJournal();
+        });
+        secondary("Вернуться к тренировке", this::live);
+        secondary("На главную", this::home);
     }
 
     private void startLiveJournal() {
         liveIndices = new ArrayList<>();
         for (int i = 0; i < completed.length; i++) if (completed[i]) liveIndices.add(i);
-        liveAnswers = new String[liveIndices.size() * 2][3];
+        liveAnswers = new String[liveIndices.size() * liveAthletes.size()][3];
         for (String[] answer : liveAnswers) for (int i = 0; i < 3; i++) answer[i] = "";
         liveJournalDate = LocalDate.now().toString();
         liveJournalIndex = 0;
@@ -573,7 +646,7 @@ public final class MainActivity extends Activity {
         begin("Журнал после тренировки", "live_log");
         int exercisesPerAthlete = liveIndices.size();
         int participant = liveJournalIndex / exercisesPerAthlete;
-        String athlete = participant == 0 ? WorkoutStore.KIRILL : WorkoutStore.IGOR;
+        String athlete = liveAthletes.get(participant);
         ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(liveJournalIndex % exercisesPerAthlete));
         String[] answer = liveAnswers[liveJournalIndex];
         page.addView(text(athlete, 21, GREEN, true));
@@ -600,8 +673,9 @@ public final class MainActivity extends Activity {
         liveRpeField = input("0–10", answer[1], InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         page.addView(text("Боль / дискомфорт", 17, INK, true));
         livePainField = input("0–10", answer[2], InputType.TYPE_CLASS_NUMBER);
-        String nextLabel = liveJournalIndex == liveAnswers.length - 1 ? "Сохранить оба журнала" :
-                liveJournalIndex == exercisesPerAthlete - 1 ? "Перейти к Игорю" : "Следующее упражнение";
+        String nextLabel = liveJournalIndex == liveAnswers.length - 1 ? "Сохранить журнал" :
+                liveJournalIndex % exercisesPerAthlete == exercisesPerAthlete - 1
+                        ? "Следующий участник: " + liveAthletes.get(participant + 1) : "Следующее упражнение";
         button(nextLabel, () -> {
             if (!captureLiveAnswer(true)) return;
             if (liveJournalIndex == liveAnswers.length - 1) saveLiveJournal();
@@ -642,18 +716,17 @@ public final class MainActivity extends Activity {
         List<WorkoutStore.NewEntry> records = new ArrayList<>();
         int exercisesPerAthlete = liveIndices.size();
         for (int i = 0; i < liveAnswers.length; i++) {
-            String athlete = i < exercisesPerAthlete ? WorkoutStore.KIRILL : WorkoutStore.IGOR;
+            String athlete = liveAthletes.get(i / exercisesPerAthlete);
             ProgramA.Exercise exercise = program.exercises.get(liveIndices.get(i % exercisesPerAthlete));
             String[] answer = liveAnswers[i];
             records.add(new WorkoutStore.NewEntry(athlete,
-                    new String[]{liveJournalDate, "A", exercise.name, answer[0], exercise.weeks[week - 1], answer[1], answer[2], ""}));
+                    new String[]{liveJournalDate, programCode, exercise.name, answer[0], exercise.weeks[week - 1], answer[1], answer[2], ""}));
         }
         try {
             store.addAll(records);
             begin("Журнал сохранён", "saved");
-            paragraph("Добавлено по " + exercisesPerAthlete + " упражнений для Кирилла и Игоря · " + liveJournalDate);
-            button("Журнал Кирилла", () -> entries(WorkoutStore.KIRILL, liveJournalDate));
-            button("Журнал Игоря", () -> entries(WorkoutStore.IGOR, liveJournalDate));
+            paragraph("Добавлено по " + exercisesPerAthlete + " упражнений для " + liveAthletes.size() + " участников · " + liveJournalDate);
+            for (String athlete : liveAthletes) button("Журнал · " + athlete, () -> entries(athlete, liveJournalDate));
             secondary("На главную", this::home);
         } catch (Exception error) {
             Toast.makeText(this, "Не удалось сохранить журнал: " + error.getMessage(), Toast.LENGTH_LONG).show();

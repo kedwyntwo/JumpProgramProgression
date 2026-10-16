@@ -34,25 +34,46 @@ public class WorkoutStoreTest {
         WorkoutStore store = new WorkoutStore(context);
         assertTrue(store.hasUnassigned());
         assertEquals(1, store.onDate("", "2026-01-01").size());
-        assertTrue(store.onDate(WorkoutStore.KIRILL, "2026-01-01").isEmpty());
+        assertTrue(store.onDate("Анна", "2026-01-01").isEmpty());
         long id = store.onDate("", "2026-01-01").get(0).id;
-        assertTrue(store.assign(id, WorkoutStore.KIRILL));
+        assertTrue(store.createProfile("Анна"));
+        assertTrue(store.assign(id, "Анна"));
         assertFalse(store.hasUnassigned());
-        assertEquals(1, store.onDate(WorkoutStore.KIRILL, "2026-01-01").size());
+        assertEquals(1, store.onDate("Анна", "2026-01-01").size());
+    }
+
+    @Test public void migratesExistingProfilesAndPreservesEntriesOnDeletion() {
+        Context context = RuntimeEnvironment.getApplication();
+        context.deleteDatabase("workouts.db");
+        SQLiteDatabase old = context.openOrCreateDatabase("workouts.db", Context.MODE_PRIVATE, null);
+        old.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL, workout TEXT NOT NULL, exercise TEXT NOT NULL, weight TEXT, sets_reps TEXT, rpe TEXT, pain TEXT, comment TEXT, athlete TEXT NOT NULL DEFAULT '')");
+        old.execSQL("INSERT INTO entries(date, workout, exercise, athlete) VALUES ('2026-01-03', 'A', 'Мёртвый жук', 'Кирилл')");
+        old.execSQL("CREATE INDEX entries_by_date ON entries(date DESC, id)");
+        old.execSQL("CREATE INDEX entries_by_athlete_date ON entries(athlete, date DESC, id)");
+        old.setVersion(2);
+        old.close();
+        WorkoutStore store = new WorkoutStore(context);
+        assertEquals(java.util.Collections.singletonList("Кирилл"), store.profiles());
+        assertFalse(store.createProfile("кирилл"));
+        assertTrue(store.deleteProfile("Кирилл"));
+        assertTrue(store.profiles().isEmpty());
+        assertEquals(1, store.onDate("", "2026-01-03").size());
     }
 
     @Test public void exportsRealXlsWithOneExercisePerRowAndInclusiveDateRange() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
         context.deleteDatabase("workouts.db");
         WorkoutStore store = new WorkoutStore(context);
-        store.add(WorkoutStore.KIRILL, row("2026-01-01", "До периода", "5 кг"));
-        store.add(WorkoutStore.KIRILL, row("2026-01-02", "Мёртвый жук", "Свой вес"));
-        store.add(WorkoutStore.IGOR, row("2026-01-02", "Ротация в блоке", "8 кг"));
-        store.add(WorkoutStore.IGOR, row("2026-01-03", "После периода", "9 кг"));
+        assertTrue(store.createProfile("Анна"));
+        assertTrue(store.createProfile("Борис"));
+        store.add("Анна", row("2026-01-01", "До периода", "5 кг"));
+        store.add("Анна", row("2026-01-02", "Мёртвый жук", "Свой вес"));
+        store.add("Борис", row("2026-01-02", "Ротация в блоке", "8 кг"));
+        store.add("Борис", row("2026-01-03", "После периода", "9 кг"));
 
         List<WorkoutStore.Entry> rows = store.exportRows(null, "2026-01-02", "2026-01-02");
         assertEquals(2, rows.size());
-        assertEquals(1, store.exportRows(WorkoutStore.KIRILL, "2026-01-02", "2026-01-02").size());
+        assertEquals(1, store.exportRows("Анна", "2026-01-02", "2026-01-02").size());
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         XlsExporter.write(output, rows);
         byte[] bytes = output.toByteArray();
@@ -63,9 +84,9 @@ public class WorkoutStoreTest {
             assertEquals(3, sheet.getRows());
             assertEquals("Пользователь", sheet.getCell(0, 0).getContents());
             assertEquals("Подходы × повторы", sheet.getCell(5, 0).getContents());
-            assertEquals("Кирилл", sheet.getCell(0, 1).getContents());
+            assertEquals("Анна", sheet.getCell(0, 1).getContents());
             assertEquals("Мёртвый жук", sheet.getCell(3, 1).getContents());
-            assertEquals("Игорь", sheet.getCell(0, 2).getContents());
+            assertEquals("Борис", sheet.getCell(0, 2).getContents());
             assertEquals("Ротация в блоке", sheet.getCell(3, 2).getContents());
             assertEquals("8 кг", sheet.getCell(4, 2).getContents());
             book.close();

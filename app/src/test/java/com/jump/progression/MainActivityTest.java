@@ -11,6 +11,7 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.SeekBar;
 import android.widget.VideoView;
@@ -102,6 +103,7 @@ public class MainActivityTest {
             }
         }
         click(activity, "Live-тренировка");
+        click(activity, "Программа А");
         click(activity, "Посмотреть видео упражнения");
         Intent first = Shadows.shadowOf(activity).getNextStartedActivity();
         assertEquals(VideoActivity.class.getName(), first.getComponent().getClassName());
@@ -125,8 +127,9 @@ public class MainActivityTest {
     @Test public void manualEntryUsesOwnWeightAndNumericRepsAndCanBeDeleted() {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         activity.deleteDatabase("workouts.db");
+        assertTrue(new WorkoutStore(activity).createProfile("Анна"));
         click(activity, "Создать запись тренировки");
-        click(activity, WorkoutStore.KIRILL);
+        click(activity, "Анна");
         typeAndNext(activity, "2026-10-07");
         typeAndNext(activity, "A");
         typeAndNext(activity, "Мёртвый жук");
@@ -145,25 +148,28 @@ public class MainActivityTest {
         assertNotNull(find(root(activity), TextView.class, "Подходы × повторы: 2×6"));
         assertNotNull(find(root(activity), TextView.class, "Комментарий: Техника чистая"));
         assertTrue(all(root(activity), EditText.class).isEmpty());
-        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07");
+        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate("Анна", "2026-10-07");
         assertEquals(1, saved.size());
-        assertEquals(WorkoutStore.KIRILL, saved.get(0).athlete);
+        assertEquals("Анна", saved.get(0).athlete);
         assertEquals("Свой вес", saved.get(0).values[3]);
         click(activity, "Удалить запись · Мёртвый жук");
-        assertEquals(1, new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07").size());
+        assertEquals(1, new WorkoutStore(activity).onDate("Анна", "2026-10-07").size());
         confirm();
-        assertTrue(new WorkoutStore(activity).onDate(WorkoutStore.KIRILL, "2026-10-07").isEmpty());
+        assertTrue(new WorkoutStore(activity).onDate("Анна", "2026-10-07").isEmpty());
     }
 
     @Test public void liveWorkoutLogsOnlyCompletedExercisesWithPrefilledPlan() throws Exception {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         activity.deleteDatabase("workouts.db");
+        assertTrue(new WorkoutStore(activity).createProfile("Анна"));
+        assertTrue(new WorkoutStore(activity).createProfile("Борис"));
         ProgramA program = new ProgramA(activity);
         assertEquals(10, program.exercises.size());
         assertEquals("Мёртвый жук", program.exercises.get(0).name);
         assertEquals("Подъём на носок одной ногой", program.exercises.get(9).name);
         assertEquals(45, program.exercises.get(0).restSeconds());
         click(activity, "Live-тренировка");
+        click(activity, "Программа А");
         Button weekThree = findByDescription(root(activity), "Неделя 3");
         assertNotNull(weekThree);
         weekThree.performClick();
@@ -175,6 +181,8 @@ public class MainActivityTest {
         click(activity, "Упражнение выполнено");
         click(activity, "Завершить тренировку");
         confirm();
+        for (CheckBox participant : all(root(activity), CheckBox.class)) participant.setChecked(true);
+        click(activity, "Заполнить журнал");
         assertNotNull(find(root(activity), TextView.class, "План недели 3: 3×8/сторона"));
         click(activity, "Свой вес");
         List<EditText> first = all(root(activity), EditText.class);
@@ -185,8 +193,8 @@ public class MainActivityTest {
         second.get(0).setText("8");
         second.get(1).setText("8");
         second.get(2).setText("1");
-        click(activity, "Перейти к Игорю");
-        assertNotNull(find(root(activity), TextView.class, WorkoutStore.IGOR));
+        click(activity, "Следующий участник: Борис");
+        assertNotNull(find(root(activity), TextView.class, "Борис"));
         click(activity, "Свой вес");
         List<EditText> igorFirst = all(root(activity), EditText.class);
         igorFirst.get(1).setText("6");
@@ -196,11 +204,11 @@ public class MainActivityTest {
         igorSecond.get(0).setText("10");
         igorSecond.get(1).setText("9");
         igorSecond.get(2).setText("2");
-        click(activity, "Сохранить оба журнала");
+        click(activity, "Сохранить журнал");
         String today = LocalDate.now().toString();
         WorkoutStore store = new WorkoutStore(activity);
-        List<WorkoutStore.Entry> kirill = store.onDate(WorkoutStore.KIRILL, today);
-        List<WorkoutStore.Entry> igor = store.onDate(WorkoutStore.IGOR, today);
+        List<WorkoutStore.Entry> kirill = store.onDate("Анна", today);
+        List<WorkoutStore.Entry> igor = store.onDate("Борис", today);
         assertEquals(2, kirill.size());
         assertEquals(2, igor.size());
         assertArrayEquals(new String[]{today, "A", "Мёртвый жук", "Свой вес", "3×8/сторона", "7", "0", ""}, kirill.get(0).values);
@@ -209,19 +217,76 @@ public class MainActivityTest {
         assertArrayEquals(new String[]{today, "A", "Ротация в блоке", "10 кг", "3×8/сторона", "9", "2", ""}, igor.get(1).values);
         click(activity, "На главную");
         click(activity, "Журнал тренировок");
-        click(activity, WorkoutStore.KIRILL);
+        click(activity, "Анна");
         click(activity, today);
         assertNotNull(find(root(activity), TextView.class, "Вес: 8 кг"));
         assertNull(find(root(activity), TextView.class, "Вес: 10 кг"));
     }
 
+    @Test public void profileManagementAndProgramBUseMatchingVideos() throws Exception {
+        MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
+        activity.deleteDatabase("workouts.db");
+        click(activity, "Профили");
+        all(root(activity), EditText.class).get(0).setText("  Мария  ");
+        click(activity, "Создать профиль");
+        assertEquals(java.util.Collections.singletonList("Мария"), new WorkoutStore(activity).profiles());
+        click(activity, "На главную");
+        ProgramA programB = new ProgramA(activity, "B");
+        assertEquals(10, programB.exercises.size());
+        assertEquals("Прыжки на одной ноге из стороны в сторону", programB.exercises.get(2).name);
+        assertEquals("Подъём на носок одной ногой", programB.exercises.get(9).name);
+        assertEquals(90, programB.exercises.get(3).restSeconds());
+        for (int i = 0; i < 10; i++) {
+            try (InputStream video = activity.getResources().openRawResource(VideoActivity.videoForIndex("B", i))) {
+                byte[] header = new byte[12];
+                assertEquals(12, video.read(header));
+                assertEquals("ftyp", new String(header, 4, 4, java.nio.charset.StandardCharsets.US_ASCII));
+            }
+        }
+        assertEquals(VideoActivity.videoForIndex(0), VideoActivity.videoForIndex("B", 0));
+        assertEquals(VideoActivity.videoForIndex(9), VideoActivity.videoForIndex("B", 9));
+        click(activity, "Live-тренировка");
+        click(activity, "Программа Б");
+        click(activity, "Следующее упражнение");
+        click(activity, "Следующее упражнение");
+        assertNotNull(find(root(activity), TextView.class, programB.exercises.get(2).name));
+        click(activity, "Посмотреть видео упражнения");
+        Intent video = Shadows.shadowOf(activity).getNextStartedActivity();
+        assertEquals("B", video.getStringExtra(VideoActivity.EXTRA_PROGRAM));
+        assertEquals(2, video.getIntExtra(VideoActivity.EXTRA_EXERCISE_INDEX, -1));
+        click(activity, "Упражнение выполнено");
+        click(activity, "Завершить тренировку");
+        confirm();
+        all(root(activity), CheckBox.class).get(0).setChecked(true);
+        click(activity, "Заполнить журнал");
+        assertNotNull(find(root(activity), TextView.class, programB.exercises.get(2).name));
+        click(activity, "Свой вес");
+        List<EditText> answers = all(root(activity), EditText.class);
+        answers.get(1).setText("7");
+        answers.get(2).setText("0");
+        click(activity, "Сохранить журнал");
+        String today = LocalDate.now().toString();
+        List<WorkoutStore.Entry> saved = new WorkoutStore(activity).onDate("Мария", today);
+        assertEquals(1, saved.size());
+        assertEquals("B", saved.get(0).values[1]);
+        assertEquals(programB.exercises.get(2).name, saved.get(0).values[2]);
+        assertEquals(programB.exercises.get(2).weeks[0], saved.get(0).values[4]);
+        click(activity, "На главную");
+        click(activity, "Профили");
+        click(activity, "Удалить профиль · Мария");
+        confirm();
+        assertTrue(new WorkoutStore(activity).profiles().isEmpty());
+        assertEquals(1, new WorkoutStore(activity).onDate("", today).size());
+    }
+
     @Test public void exportRequiresDateRangeAndOpensPhoneSavePicker() {
         MainActivity activity = Robolectric.buildActivity(MainActivity.class).setup().get();
         activity.deleteDatabase("workouts.db");
-        new WorkoutStore(activity).add(WorkoutStore.KIRILL,
+        assertTrue(new WorkoutStore(activity).createProfile("Анна"));
+        new WorkoutStore(activity).add("Анна",
                 new String[]{"2026-01-02", "A", "Мёртвый жук", "Свой вес", "2×6", "7", "0", ""});
         click(activity, "Выгрузить XLS");
-        click(activity, WorkoutStore.KIRILL);
+        click(activity, "Анна");
         List<EditText> dates = all(root(activity), EditText.class);
         assertEquals(2, dates.size());
         dates.get(0).setText("2026-01-03");
